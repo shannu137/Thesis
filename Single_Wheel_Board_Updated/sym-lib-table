@@ -1,0 +1,5 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "Single_Wheel_Lib")(type "KiCad")(uri "${KIPRJMOD}/Single_Wheel_Lib.kicad_sym")(options "")(descr ""))
+  (lib (name "teensy")(type "Legacy")(uri "${KIPRJMOD}/teensy_library/teensy.lib")(options "")(descr ""))
+)

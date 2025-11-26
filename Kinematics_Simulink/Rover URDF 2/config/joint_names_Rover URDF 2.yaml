@@ -1,0 +1,1 @@
+controller_joint_names: ['', 'rocker right ', 'bogie right', 'knuckle middle right', 'middle wheel r', 'knuckle rear right', 'rear wheel r', 'knuckle front right', 'front wheel r', 'rocker left', 'bogie left', 'knuckle rear left', 'rear wheel l', 'knuckle middle left', 'middle wheel l', 'knuckle front left', 'front wheel l', 'tie rod left ', 'Differential', 'tie rod right ', ]
