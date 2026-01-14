@@ -94,7 +94,7 @@
  */
 
 #include <Arduino.h>
-#include <MotorController.h>
+// #include <MotorController.h>
 
 #define SYNC_WORD            0xAA55
 #define CCSDS_VERSION        0
@@ -128,6 +128,11 @@
 #define NACK_INTERNAL_ERROR      0x40
 
 #define TEENSY_ID                1
+#define ESTOP                    3
+#define SAFE                     2
+#define ACTIVE                   1
+#define IDLE                     0
+
 #define MAX_LOOP_TIME            0
 #define VEL_MIN_THRESHOLD        0
 #define CURR_ZERO_THRESHOLD      0 
@@ -357,13 +362,13 @@ FaultResult get_fault_report(float vel[3], float curr[3], int pwm[3], uint32_t l
     if (motor_stall || driver_fault)   result.aux_flags |= AUX_ESTOP_ACTIVE;
 
     if (driver_fault || motor_stall)
-        result.state = 3;                      // ESTOP
+        result.state = ESTOP;                      // ESTOP
     else if (encoder_fault || over_current)
-        result.state = 2;                      // SAFE_MODE
+        result.state = SAFE;                       // SAFE_MODE
     else if (any_pwm_on)
-        result.state = 1;                      // ACTIVE
+        result.state = ACTIVE;                     // ACTIVE
     else
-        result.state = 0;                      // IDLE
+        result.state = IDLE;                       // IDLE
 
     return result;
 }
@@ -676,7 +681,7 @@ bool check_state(const FaultResult* fault, const uint8_t seq_count){
 
 
 
-MotorController motor(ENCA, ENCB, PWM, IN1, IN2, 0x40);
+// MotorController motor(ENCA, ENCB, PWM, IN1, IN2, 0x40);
 
 uint32_t loop_start_time = millis();
 uint32_t prev_tdaq_time = 0;
@@ -685,8 +690,8 @@ uint8_t prev_state = 0;
 
 void setup(){
   Serial.begin(115200);
-  motor.begin();
-  motor.setTargetVelocity(-10);
+  // motor.begin();
+  // motor.setTargetVelocity(-10);
 }
 
 void loop(){
@@ -701,11 +706,11 @@ void loop(){
   //  get 3 pwm
   
   FaultResult fault = get_fault_report(vel, curr, pwm, loop_time);
-  if (((fault->state == 2) && (prev_state != 2)) || ((fault->state == 3) && (prev_state != 3))){
+  if (((fault->state == SAFE) && (prev_state != SAFE)) || ((fault->state == ESTOP) && (prev_state != ESTOP))){
     send_fault_report(&fault);
   }
 
-  if(fault->state == 2){
+  if(fault->state == ESTOP){
   //  stop_all_motors
   }
 
