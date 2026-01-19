@@ -8,5 +8,16 @@ void setup(){
 }
 
 void loop(){
-    motor.update();
+    MotorData data = motor.update();
+    Serial.print(data.ts);
+    Serial.print(" ");
+    Serial.print(data.current_mA);
+    Serial.print(" ");
+    Serial.print(data.encoderPos);
+    Serial.print(" ");
+    Serial.print(data.pwm);
+    Serial.print(" ");
+    Serial.println(data.velocity);
+
+    delay(10);
 }

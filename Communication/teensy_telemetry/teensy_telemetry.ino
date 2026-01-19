@@ -94,7 +94,7 @@
  */
 
 #include <Arduino.h>
-// #include <MotorController.h>
+#include <MotorController_Sim.h>
 
 #define SYNC_WORD            0xAA55
 #define CCSDS_VERSION        0
@@ -139,8 +139,8 @@
 #define CURR_THRESHOLD           0
 #define CURR_STALL_CURRENT       0
 
-#define TELEMETRY_TIMEPERIOD 10;   // in millis
-#define HEARTBEAT_TIMEPERIOD 1000; // in millis
+#define TELEMETRY_TIMEPERIOD 10   // in millis
+#define HEARTBEAT_TIMEPERIOD 1000 // in millis
 
 #define ENCA  18
 #define ENCB  19
@@ -681,11 +681,13 @@ bool check_state(const FaultResult* fault, const uint8_t seq_count){
 
 
 
-// MotorController motor(ENCA, ENCB, PWM, IN1, IN2, 0x40);
+MotorController_Sim motor1;
+MotorController_Sim motor2;
+MotorController_Sim motor3;
 
 uint32_t loop_start_time = millis();
-uint32_t prev_tdaq_time = 0;
-uint32_t prev_hb_time = 0;
+long prev_tdaq_time = 0;
+long prev_hb_time = 0;
 uint8_t prev_state = 0;
 
 void setup(){
@@ -704,18 +706,27 @@ void loop(){
   //  get 3 current reading
   //  calculate 3 velocity
   //  get 3 pwm
+  MotorData data1 = motor1.update();
+  MotorData data2 = motor2.update();
+  MotorData data3 = motor3.update();
   
+  long daq_time = data2.ts;
+  float vel[] = {data1.velocity, data2.velocity, data3.velocity};
+  long encoder[] = {data1.encoderPos, data2.encoderPos, data3.encoderPos};
+  float curr[] = {data1.current_mA, data2.current_mA, data3.current_mA};
+  int pwm[] = {data1.pwm, data2.pwm, data3.pwm};
+
   FaultResult fault = get_fault_report(vel, curr, pwm, loop_time);
-  if (((fault->state == SAFE) && (prev_state != SAFE)) || ((fault->state == ESTOP) && (prev_state != ESTOP))){
+  if (((fault.state == SAFE) && (prev_state != SAFE)) || ((fault.state == ESTOP) && (prev_state != ESTOP))){
     send_fault_report(&fault);
   }
 
-  if(fault->state == ESTOP){
+  if(fault.state == ESTOP){
   //  stop_all_motors
   }
 
   if (daq_time - prev_tdaq_time >= TELEMETRY_TIMEPERIOD){
-    send_telemetry(ts, encoder, vel, curr, &fault);
+    send_telemetry(daq_time, encoder, vel, curr, &fault);
     prev_tdaq_time = daq_time;
   }
   if (millis() - prev_hb_time >= HEARTBEAT_TIMEPERIOD){
@@ -723,7 +734,7 @@ void loop(){
     prev_hb_time = millis();
   }
 
-  if (ser.available()){
-    parse_packet(ser, &fault);
-  }
+  // if (ser.available()){
+  //   parse_packet(ser, &fault);
+  // }
 }
