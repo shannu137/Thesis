@@ -133,11 +133,11 @@
 #define ACTIVE                   1
 #define IDLE                     0
 
-#define MAX_LOOP_TIME            0
+#define MAX_LOOP_TIME            1000
 #define VEL_MIN_THRESHOLD        0
-#define CURR_ZERO_THRESHOLD      0 
-#define CURR_THRESHOLD           0
-#define CURR_STALL_CURRENT       0
+#define CURR_ZERO_THRESHOLD      0
+#define CURR_THRESHOLD           1000
+#define CURR_STALL_CURRENT       3500
 
 #define TELEMETRY_TIMEPERIOD 10   // in millis
 #define HEARTBEAT_TIMEPERIOD 1000 // in millis
@@ -250,7 +250,8 @@ void send_packet(uint16_t apid, uint32_t ts, const uint8_t* payload, uint16_t pa
   uint16_t crc = crc16_ccitt(packet+SYNC_SIZE_B, PRIMARY_SIZE_B + SECONDARY_SIZE_B + payload_length);
   to_le16(packet+i, crc); i+=2;
 
-  Serial.write(packet, i);
+  // Serial.println(apid);
+  // Serial.write(packet, i);
 }
 
 FaultResult get_fault_report(float vel[3], float curr[3], int pwm[3], uint32_t loop_time)
@@ -291,12 +292,14 @@ FaultResult get_fault_report(float vel[3], float curr[3], int pwm[3], uint32_t l
                 // ENCODER_FAULT (free wheel)
                 encoder_fault = true;
                 result.motor_id  |= (1 << i);
+                // Serial.print("1 ");
             }
             else
             {
                 // Any current while PWM=0 → DRIVER_FAULT
                 driver_fault = true;
                 result.motor_id  |= (1 << i);
+                // Serial.print("2 ");
             }
             continue;
         }
@@ -308,12 +311,14 @@ FaultResult get_fault_report(float vel[3], float curr[3], int pwm[3], uint32_t l
                 // DRIVER_FAULT
                 driver_fault = true;
                 result.motor_id  |= (1 << i);
+                // Serial.print("3 ");
             }
             else if (curr_lt && enc0)
             {
                 // ENCODER_FAULT
                 encoder_fault = true;
                 result.motor_id  |= (1 << i);
+                // Serial.print("4 ");
             }
             else if (curr_gt && enc0)
             {
@@ -321,12 +326,14 @@ FaultResult get_fault_report(float vel[3], float curr[3], int pwm[3], uint32_t l
                 motor_stall = true;
                 driver_fault = true;
                 result.motor_id  |= (1 << i);
+                // Serial.print("5 ");
             }
             else if (curr_stall && enc0)
             {
                 // MOTOR_STALL
                 motor_stall = true;
                 result.motor_id  |= (1 << i);
+                // Serial.print("6 ");
             }
             else if (curr0 && !enc0)
             {
@@ -334,6 +341,7 @@ FaultResult get_fault_report(float vel[3], float curr[3], int pwm[3], uint32_t l
                 encoder_fault = true;
                 driver_fault = true;
                 result.motor_id  |= (1 << i);
+                // Serial.print("7 ");
             }
             else if (curr_lt && !enc0)
             {
@@ -344,12 +352,14 @@ FaultResult get_fault_report(float vel[3], float curr[3], int pwm[3], uint32_t l
                 // OVER_CURRENT
                 over_current = true;
                 result.motor_id  |= (1 << i);
+                // Serial.print("8 ");
             }
             else if (curr_stall && !enc0)
             {
                 // OVER_CURRENT
                 over_current = true;
                 result.motor_id  |= (1 << i);
+                // Serial.print("9 ");
             }
         }
     }
@@ -716,10 +726,21 @@ void loop(){
   float curr[] = {data1.current_mA, data2.current_mA, data3.current_mA};
   int pwm[] = {data1.pwm, data2.pwm, data3.pwm};
 
+  for(int iter = 0; iter < 3; iter++){
+    Serial.print(vel[iter]);
+    Serial.print(" ");
+    Serial.print(curr[iter]);
+    Serial.print(" ");
+    Serial.print(pwm[iter]);
+    Serial.print(" ");
+  }
+  Serial.println(" ");
+
   FaultResult fault = get_fault_report(vel, curr, pwm, loop_time);
   if (((fault.state == SAFE) && (prev_state != SAFE)) || ((fault.state == ESTOP) && (prev_state != ESTOP))){
     send_fault_report(&fault);
   }
+  prev_state = fault.state;
 
   if(fault.state == ESTOP){
   //  stop_all_motors
