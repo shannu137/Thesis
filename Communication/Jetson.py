@@ -87,6 +87,7 @@ def parse_packet(ser):
     packet_type = (packet_info >> 12) & 0x1
     secHdrFlag = (packet_info >> 11) & 0x1
     apid = (packet_info) & 0x7FF
+    print(hex(apid))
 
     seq_flags = (seq_ctrl >> 14) & 0x3
     seq_count = (seq_ctrl) & 0x3FFF
@@ -107,7 +108,9 @@ def parse_packet(ser):
     
     if apid == 0x001:
         payload_parsed = parse_telemetry_payload(payload)
-
+    else:
+        return {}
+    
     # CRC
     crc_rx = read_exact(ser, CRC_SIZE_B)
     if not crc_rx:
@@ -120,6 +123,8 @@ def parse_packet(ser):
         print("CRC Error")
         return None
     
+    # print(payload_parsed)
+    
     return {"packet_type": packet_type, "apid": apid, "timestamp": ts, "teensy_id": teensy_id,
             "seq_count": seq_count, "payload": payload_parsed, "primary": primary,
             "secondary": secondary, "crc_ok": True}
@@ -127,9 +132,9 @@ def parse_packet(ser):
 
 def parse_telemetry_payload(payload):
     encoder = [0, 0, 0]
-    vel = [0, 0, 0]
     curr = [0, 0, 0]
-    
+    vel = [0, 0, 0]
+
     i = 0
     encoder[0] = le_int32(payload[i:i+4]); i+=4;
     encoder[1] = le_int32(payload[i:i+4]); i+=4;
@@ -148,12 +153,10 @@ def parse_telemetry_payload(payload):
     return {"encoder": encoder, "velocity": vel, "current": curr, "aux_flags": aux_flags}
 
 
-ser = serial.Serial('/dev/ttyACM0', 115200)
-
+ser = serial.Serial('/dev/ttyUSB0', 115200)
 while True:
     packet = parse_packet(ser)
-
     if packet is None:
         continue
 
-    print(packet["timestamp"], packet["apid"], packet["payload"])
+    # print(packet["payload"])
