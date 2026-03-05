@@ -1,0 +1,21 @@
+1. periodic Heartbeat, watchdog if communication loss
+2. CRC, seq nos, ack protocol -> retransmit last data if packet loss
+3. CRC-16/higher -> discard corrupted packets and request retransmit
+4. In Jetson, check for range values of current sensor and vel / encoder pos too
+5. If encoder failure -> zero velocity despite motor cmd -> "DEGRADED mode" -> switch to model-based / current-based velocity estimation
+6. Encoder stops, wheel moves -> ESTOP
+7. When motor off check current values too -> current sensor offset drift -> AUTO ZERO CALIBRATION
+8. Zero current with PWM -> switch to "SAFE mode"
+9. Current with zero PWM, velocity mismatch (cmd vs observed) -> ESTOP
+10. low velocity than commanded velocity, high current -> reduce speed cmd
+11. zero current, zero velocity -> switch to SAFE
+12. velocity opposite to cmd velocity, high current -> ESTOP
+13. Nonzero cmd, zero current and velocity -> DEGRADED mode
+14. High current, low velocity -> DEGRADED mode
+15. High current, zero velocity -> ESTOP
+16. High velocity, no rover movement -> ESTOP
+17. No HB or telemetry --> ESTOP
+18. Use watchdog to check no deadlocks
+19. No cmds from Teensy --> ESTOP
+20. No cmds from Jetson --> ESTOP
+21. Bounds check
