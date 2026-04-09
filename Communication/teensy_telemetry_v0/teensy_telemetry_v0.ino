@@ -121,16 +121,16 @@
  *   1  IDLE       — system powered but inactive
  *   2  NOMINAL    — fully functional
  *   3  DEGRADED   — operating with reduced capability
- *   4  SAFE       — significant failure detected, safe operations only
- *   5  ESTOP      — critical, immediate shutdown of actuators/power
- *   6  INHIBIT    — motors disabled by command; controller remains operational but
+ *   4  INHIBIT    — motors disabled by command; controller remains operational but
                       rejects motion commands until explicitly re-enabled
+ *   5  SAFE       — significant failure detected, safe operations only
+ *   6  ESTOP      — critical, immediate shutdown of actuators/power
 
 
 
-Think about state transition from high to low
+
 calibration
-initialization
+retransmit loss packet
 degraded mode
  */
  
@@ -156,6 +156,20 @@ degraded mode
 #define MAX_PACKET_SIZE      512
 
 // ============================================================
+//  APIDs
+// ============================================================
+#define APID_DATA_TELEMETRY     0x001
+#define APID_HEARTBEAT          0x002
+#define APID_ACK_RESPONSE       0x003
+#define APID_NACK_RESPONSE      0x004
+#define APID_FAULT_REPORT       0x005
+
+#define APID_TELECOMMAND        0x010
+#define APID_SYSTEM_COMMANDS    0x011
+
+#define APID_TIME_SYNC          0x020
+
+// ============================================================
 //  AUX FLAGS
 // ============================================================
 #define AUX_CPU_OVERLOAD         0x01
@@ -164,7 +178,7 @@ degraded mode
 #define AUX_STALL_DETECTED       0x08
 #define AUX_CURRSENSOR_FAULT     0x10
 #define AUX_DRIVER_FAULT         0x20
-#define AUX_SENSOR_OUT_OF_RANGE  0x30
+#define AUX_SENSOR_OUT_OF_RANGE  0x40
 #define AUX_ESTOP_ACTIVE         0x80
 
 // ============================================================
@@ -182,15 +196,26 @@ degraded mode
 #define NACK_INHIBIT_ACTIVE      0x32
 
 // ============================================================
+//  COMMAND CODES FOR APID 0x011
+// ============================================================
+#define CMD_STOP_ALL_MOTORS      0x01
+#define CMD_ENABLE_MOTORS        0x02
+#define CMD_DISABLE_MOTORS       0x03
+#define CMD_RESET_ENCODERS       0x04
+#define CMD_ESTOP                0x05
+#define CMD_RELEASE_ESTOP        0x06
+#define CMD_REBOOT_TEENSY        0x08
+
+// ============================================================
 //  SYSTEM MODES
 // ============================================================
 #define MODE_INIT            0
 #define MODE_IDLE            1
 #define MODE_NOMINAL         2
 #define MODE_DEGRADED        3
-#define MODE_SAFE            4
-#define MODE_ESTOP           5
-#define MODE_INHIBIT         6
+#define MODE_INHIBIT         4
+#define MODE_SAFE            5
+#define MODE_ESTOP           6
 
 // ============================================================
 //  HARDWARE CONFIG
@@ -210,12 +235,14 @@ degraded mode
 #define TELEMETRY_PERIOD_MS    10
 #define HEARTBEAT_PERIOD_MS    1000
 #define MAX_LOOP_TIME_MS       1000   
-#define INIT_TIMEOUT_MS        5000    // Max time allowed in INIT
 #define JETSON_CMD_TIMEOUT_MS  5000    // no commands → ESTOP after this
-#define READ_TIMEOUT_MS        50      // To read commands from serial
+#define READ_TIMEOUT_MS        500      // To read commands from serial
+#define INIT_TIMEOUT_MS        2000    // Max time allowed in INIT
 
 // Watchdog kick period (ms) — must be < hardware WDT period
-#define SW_WDT_KICK_PERIOD_MS  500
+#define WDT_KICK_PERIOD_MS  500
+#define WDT_WARN_S          2     // in sec
+#define WDT_RESET_S         1     // in sec
 
 // ============================================================
 //  CURRENT THRESHOLDS  (mA)
@@ -235,12 +262,15 @@ degraded mode
 // ============================================================
 //  COMMAND BOUNDS 
 // ============================================================
-#define VEL_CMD_MAX          50.0f
-#define VEL_CMD_MIN         -50.0f
+#define VEL_CMD_MAX          30.0f
+#define VEL_CMD_MIN         -30.0f
 #define POS_CMD_MAX          1000000L
 #define POS_CMD_MIN         -1000000L
 #define SERVO_CMD_MAX        180
 #define SERVO_CMD_MIN        0
+
+#define MAX_VELOCITY_VALID   1.5 * VEL_CMD_MAX
+#define MAX_CURRENT_VALID    1.2 * CURR_STALL_THR
 
 // ============================================================
 //  MODEL-BASED VELOCITY
@@ -274,7 +304,7 @@ static uint16_t   prev_rx_seq     = 0xFFFF;     // invalid initial value
 // System state machine
 static uint8_t     system_mode   = MODE_INIT;   // current FSM state
 static uint8_t     prev_mode     = MODE_INIT;
-static FaultResult g_fault      = {0};
+static FaultResult g_fault      = {0, MODE_INIT, 0};
 static uint32_t    init_entry_ms = 0;           // When INIT was entered
 
 static uint32_t   last_jetson_cmd_ms = 0;   
@@ -407,7 +437,7 @@ FaultResult evaluate_faults(float vel[NUM_MOTORS], float curr[NUM_MOTORS],
                             int pwm[NUM_MOTORS], float cmd_vel[NUM_MOTORS],
                             uint32_t loop_ms)
 {
-  FaultResult result = {0};
+  FaultResult result = {0, MODE_IDLE, 0};
 
   bool cpu_overload     = (loop_ms > MAX_LOOP_TIME_MS);
   bool encoder_fault    = false;
@@ -422,13 +452,14 @@ FaultResult evaluate_faults(float vel[NUM_MOTORS], float curr[NUM_MOTORS],
 
   for (int i = 0; i < NUM_MOTORS; i++)
 {
-    bool  pwm0   = (pwm[i] == 0);
     float v      = fabsf(vel[i]);
     float c      = fabsf(curr[i]);
     float cv     = fabsf(cmd_vel[i]);
+
     float sign_v = (vel[i] >= 0) ? 1.0f : -1.0f;
     float sign_c = (cmd_vel[i] >= 0) ? 1.0f : -1.0f;
 
+    bool pwm0       = (pwm[i] == 0);
     bool vel_zero   = (v  < VEL_ZERO_THR);
     bool vel_low    = (v  < VEL_LOW_THR);
     bool cmd_nz     = (cv > VEL_ZERO_THR);
@@ -465,6 +496,12 @@ FaultResult evaluate_faults(float vel[NUM_MOTORS], float curr[NUM_MOTORS],
     }
 
     // ------------------ non-zero pwm cases ---------------------------
+    if (cmd_nz && !vel_zero && (sign_v != sign_c)) {
+      do_estop = true;
+      result.motor_id  |= (1 << i);
+      continue;
+    }
+    
     if (curr_zero && vel_zero)
     {
       // DRIVER_FAULT
@@ -494,19 +531,6 @@ FaultResult evaluate_faults(float vel[NUM_MOTORS], float curr[NUM_MOTORS],
         encoder_fault = true;
         result.motor_id  |= (1 << i);
       }
-      continue;
-    }
-
-    if (cmd_nz && !vel_zero && (sign_v != sign_c)) {
-      do_estop = true;
-      result.motor_id  |= (1 << i);
-      continue;
-    }
-
-    if (curr_high && vel_low && !vel_zero) {
-      do_safe      = true;
-      over_current = true;
-      result.motor_id  |= (1 << i);
       continue;
     }
 
@@ -541,10 +565,25 @@ FaultResult evaluate_faults(float vel[NUM_MOTORS], float curr[NUM_MOTORS],
   return result;
 }
 
+void apply_mode_transition(const FaultResult* fault){
+  if (system_mode == MODE_ESTOP) return;
+
+  // IDLE < NOMINAL < DEGRADED < INHIBIT < SAFE < ESTOP
+  if (fault->mode > system_mode){
+    system_mode  = fault->mode;
+    g_fault.mode = fault->mode;
+  }
+  if ((system_mode == MODE_DEGRADED || system_mode == MODE_NOMINAL) && fault->mode == MODE_IDLE){
+    system_mode  = fault->mode;
+    g_fault.mode = fault->mode;
+  }
+  return;
+}
+
 // ============================================================
 //  PAYLOAD BUILDER
 // ============================================================
-void send_telemetry(uint32_t ts, long enc[3], float vel[3], float curr[3], const FaultResult* fault){
+void send_telemetry(uint32_t ts, long enc[NUM_MOTORS], float vel[NUM_MOTORS], float curr[NUM_MOTORS], const FaultResult* fault){
   uint8_t  payload[37];
   uint16_t i=0;
 
@@ -562,7 +601,7 @@ void send_telemetry(uint32_t ts, long enc[3], float vel[3], float curr[3], const
 
   payload[i++] = fault->aux_flags;
 
-  send_packet(0x001, CCSDS_TYPE_TLM, ts, payload, i);
+  send_packet(APID_DATA_TELEMETRY, CCSDS_TYPE_TLM, ts, payload, i);
 }
 
 void send_heartbeat(const FaultResult* fault)
@@ -570,11 +609,11 @@ void send_heartbeat(const FaultResult* fault)
   uint8_t  payload[3];
   uint16_t i = 0;
 
-  payload[i++] = fault->mode;
+  payload[i++] = system_mode;
   payload[i++] = heartbeat_count++;
   payload[i++] = fault->aux_flags;
 
-  send_packet(0x002, CCSDS_TYPE_TLM, millis(), payload, i);
+  send_packet(APID_HEARTBEAT, CCSDS_TYPE_TLM, millis(), payload, i);
 }
 
 void send_ack(uint16_t ack_seq)
@@ -585,7 +624,7 @@ void send_ack(uint16_t ack_seq)
   to_le16(payload, ack_seq); i += 2;
   payload[i++] = 0x00;
 
-  send_packet(0x003, CCSDS_TYPE_TLM, millis(), payload, i);
+  send_packet(APID_ACK_RESPONSE, CCSDS_TYPE_TLM, millis(), payload, i);
 }
 
 void send_nack(uint16_t nack_seq, uint8_t nack_status)
@@ -596,7 +635,7 @@ void send_nack(uint16_t nack_seq, uint8_t nack_status)
   to_le16(payload, nack_seq); i += 2;
   payload[i++] = nack_status;
 
-  send_packet(0x004, CCSDS_TYPE_TLM, millis(), payload, i);
+  send_packet(APID_NACK_RESPONSE, CCSDS_TYPE_TLM, millis(), payload, i);
 }
 
 void send_fault_report(const FaultResult* fault)
@@ -607,7 +646,7 @@ void send_fault_report(const FaultResult* fault)
   payload[i++] = fault->aux_flags;
   to_le16(payload + i, fault->motor_id); i += 2;
   
-  send_packet(0x005, CCSDS_TYPE_TLM, millis(), payload, i);
+  send_packet(APID_FAULT_REPORT, CCSDS_TYPE_TLM, millis(), payload, i);
 }
 
 void send_time_sync_response(uint32_t t0, uint32_t t1)
@@ -619,7 +658,20 @@ void send_time_sync_response(uint32_t t0, uint32_t t1)
   to_le32(payload + i, t1);       i+= 4;
   to_le32(payload + i, millis()); i+= 4;
 
-  send_packet(0x020, CCSDS_TYPE_TLM, millis(), payload, i);
+  send_packet(APID_TIME_SYNC, CCSDS_TYPE_TLM, millis(), payload, i);
+}
+
+// ============================================================
+// SENSOR RANGE CHECKS
+// ============================================================
+bool sensor_range_ok(float vel[NUM_MOTORS], float curr[NUM_MOTORS], long enc[NUM_MOTORS])
+{
+    for (int i = 0; i < NUM_MOTORS; i++) {
+        if (fabsf(vel[i])  > MAX_VELOCITY_VALID)          return false;
+        if (fabsf(curr[i]) > MAX_CURRENT_VALID)           return false;
+        if (enc[i] > POS_CMD_MAX || enc[i] < POS_CMD_MIN) return false;
+    }
+    return true;
 }
 
 // ============================================================
@@ -649,19 +701,6 @@ bool validate_vel_cmd(const MotorVelServoCmd* cmd, uint16_t seq)
     }
   }
   return true;
-}
-
-// ============================================================
-// SENSOR RANGE CHECKS
-// ============================================================
-bool sensor_range_ok(float vel[3], float curr[3], long enc[3])
-{
-    for (int i = 0; i < NUM_MOTORS; i++) {
-        if (fabsf(vel[i])  > 1.5f * VEL_CMD_MAX)          return false;
-        if (fabsf(curr[i]) > 1.2f * CURR_STALL_THR) return false;
-        if (enc[i] > POS_CMD_MAX || enc[i] < POS_CMD_MIN) return false;
-    }
-    return true;
 }
 
 // ============================================================
@@ -697,6 +736,33 @@ void read_exact(Stream& ser, uint8_t* buf, uint16_t n)
     if (ser.available())
       buf[i++] = ser.read();
   }
+  
+}
+
+void parse_vel_servo_cmd(const uint8_t* payload, MotorVelServoCmd* cmd, uint16_t seq)
+{
+  uint16_t i = 0;
+  for (int m = 0; m < NUM_MOTORS; m++){
+    cmd->vel[m] = from_le_float(payload + i); i+= 4;
+    if (system_mode == MODE_SAFE && cmd->vel[m] > SPEED_REDUCTION_FACTOR * VEL_LOW_THR){
+      send_nack(seq, NACK_SAFE_ACTIVE);
+      return;
+    }
+  }
+  for (int m = 0; m < NUM_MOTORS; m++){
+    cmd->servo_pos[m] = from_le_int32(payload + i); i+=4;
+  }
+
+  if(!validate_vel_cmd(cmd, seq))
+    return;
+
+  if (system_mode == MODE_NOMINAL || system_mode == MODE_DEGRADED){
+    for (int m = 0; m < NUM_MOTORS; m++){
+      motor[m].setTargetVelocity(cmd->vel[m]);
+//      servo[m].setAngle(cmd.servo_pos[m]);
+    }
+  }
+  send_ack(seq);
 }
 
 void parse_packet(Stream& ser)
@@ -751,6 +817,7 @@ void parse_packet(Stream& ser)
 
   if (src_teensy_id != TEENSY_ID){
     send_nack(seq_count, NACK_INVALID_TEENSY_ID);
+    return;
   }
 
   // Payload
@@ -773,11 +840,9 @@ void parse_packet(Stream& ser)
     return;
   }
 
-  last_jetson_cmd_ms = millis();
-
   // Parse payload
   switch (apid){
-    case 0x010:{
+    case APID_TELECOMMAND:{
       if (system_mode == MODE_ESTOP){
         send_nack(seq_count, NACK_ESTOP_ACTIVE);
         return;
@@ -790,17 +855,17 @@ void parse_packet(Stream& ser)
       parse_vel_servo_cmd(payload, &cmd, seq_count);
       break;
     }
-    case 0x011:{
+    case APID_SYSTEM_COMMANDS:{
       uint8_t cmd = payload[0];
       switch (cmd) {
-        case 0x01: // STOP_ALL_MOTORS
+        case CMD_STOP_ALL_MOTORS:
           for (int m = 0; m < NUM_MOTORS; m++){
             motor[m].setPWM(0);
           }
           system_mode = MODE_IDLE;
           send_ack(seq_count);
           break;
-        case 0x02: // ENABLE_MOTORS
+        case CMD_ENABLE_MOTORS:
           if (system_mode == MODE_ESTOP){
             send_nack(seq_count, NACK_ESTOP_ACTIVE); 
             break;
@@ -808,24 +873,24 @@ void parse_packet(Stream& ser)
           system_mode = MODE_NOMINAL;
           send_ack(seq_count);
           break;
-        case 0x03: // DISABLE_MOTORS
+        case CMD_DISABLE_MOTORS:
           for (int m = 0; m < NUM_MOTORS; m++){
             motor[m].setPWM(0);
           }
           system_mode = MODE_INHIBIT;
           send_ack(seq_count);
           break;
-        case 0x04: // RESET_ENCODERS
+        case CMD_RESET_ENCODERS:
           for (int m = 0; m < NUM_MOTORS; m++){
             motor[m].resetEncoder();
           }
           send_ack(seq_count);
           break;
-        case 0x05: // ESTOP
+        case CMD_ESTOP:
           engage_estop();
           send_ack(seq_count);
           break;
-        case 0x06: // RELEASE_ESTOP — only if faults cleared
+        case CMD_RELEASE_ESTOP: // only if faults cleared
           if (!(g_fault.aux_flags & ~AUX_ESTOP_ACTIVE)){
               system_mode = MODE_IDLE;
               g_fault.aux_flags &= ~AUX_ESTOP_ACTIVE;
@@ -833,19 +898,21 @@ void parse_packet(Stream& ser)
           } 
           else{
               send_nack(seq_count, NACK_ESTOP_ACTIVE);
+              return;
           }
           break;
-        case 0x08: // REBOOT_TEENSY  
-          send_ack(seq_count);
-          delay(50);
+        case CMD_REBOOT_TEENSY: 
           SCB_AIRCR = 0x05FA0004;  // Cortex-M software reset
+          delay(50);
+          send_ack(seq_count);
           break;
         default:
           send_nack(seq_count, NACK_VALUE_OUT_OF_RANGE);
+          return;
       }
       break;
     }
-    case 0x020:{
+    case APID_TIME_SYNC:{
       uint32_t t0_echo = from_le32(payload);
       send_time_sync_response(t0_echo, millis());
       break;
@@ -857,31 +924,14 @@ void parse_packet(Stream& ser)
   }
 }
 
-void parse_vel_servo_cmd(const uint8_t* payload, MotorVelServoCmd* cmd, uint16_t seq)
-{
-  uint16_t i = 0;
-  for (int m = 0; m < NUM_MOTORS; m++){
-    cmd->vel[m] = from_le_float(payload + i); i+= 4;
-    if (system_mode == MODE_SAFE && cmd->vel[m] > SPEED_REDUCTION_FACTOR * VEL_LOW_THR){
-      send_nack(seq, NACK_SAFE_ACTIVE);
-    }
-  }
-  for (int m = 0; m < NUM_MOTORS; m++){
-    cmd->servo_pos[m] = from_le_int32(payload + i); i+=4;
-  }
-
-  if(!validate_vel_cmd(cmd, seq))
-    return;
-
-  if (system_mode == MODE_NOMINAL || system_mode == MODE_DEGRADED){
-    for (int m = 0; m < NUM_MOTORS; m++){
-      motor[m].setTargetVelocity(cmd->vel[m]);
-//      servo[m].setAngle(cmd.servo_pos[m]);
-    }
-  }
-  send_ack(seq);
+void enter_init(){
+  for (int i = 0; i < NUM_MOTORS; i++)
+    motor[i].setPWM(0);
+    
+  system_mode   = MODE_INIT;
+  g_fault       = {0, MODE_INIT, 0};
+  init_entry_ms = millis();
 }
-
 
 // ============================================================
 // SETUP
@@ -889,19 +939,18 @@ void parse_vel_servo_cmd(const uint8_t* payload, MotorVelServoCmd* cmd, uint16_t
 void setup(){
   Serial.begin(115200);
   
-  // Hardware watchdog: 2-second timeout  (Req 18, 19)
+  // Hardware watchdog
   WDT_timings_t cfg;
-  cfg.trigger = 1;   // interrupt at 1 s (warning)
-  cfg.timeout = 2;   // reset at 2 s
+  cfg.trigger = WDT_WARN_S;    // interrupt at 1 s (warning)
+  cfg.timeout = WDT_RESET_S;   // reset at 2 s
   wdt.begin(cfg);
 
   for (int i = 0; i < NUM_MOTORS; i++) {
     motor[i].begin();
   }
 
-  system_mode = MODE_IDLE;
-  g_fault     = {0};
-  g_fault.mode = MODE_IDLE;
+  enter_init();
+  loop_start  = millis();
 }
 
 // ============================================================
@@ -913,7 +962,7 @@ void loop(){
   loop_start          = now;
 
   // ------------------ kick watchdog each cycle ---------------
-  if ((now - last_wdt_kick_ms) >= SW_WDT_KICK_PERIOD_MS) {
+  if ((now - last_wdt_kick_ms) >= WDT_KICK_PERIOD_MS) {
       wdt.feed();
       last_wdt_kick_ms = now;
   }
@@ -927,10 +976,24 @@ void loop(){
 
   for (int i = 0; i < NUM_MOTORS; i++){
     enc[i]     = motor[i].getEncoder();
-    vel[i]     = motor[i].getVelocity()
+    vel[i]     = motor[i].getVelocity();
     curr[i]    = motor[i].getCurrent();
     pwm[i]     = motor[i].getPWM();
     cmd_vel[i] = motor[i].getCmdVel();
+  }
+
+  if (system_mode == MODE_INIT){
+    if ((now - last_hb_ms) >= HEARTBEAT_PERIOD_MS){
+      send_heartbeat(&g_fault);
+      last_hb_ms = now;
+    }
+
+    if ((now - init_entry_ms) >= INIT_TIMEOUT_MS){
+      system_mode       = MODE_IDLE;
+      g_fault.aux_flags = 0;
+      prev_mode         = MODE_INIT;
+    }
+    return;
   }
 
   // ------------------ sensor range check ---------------
@@ -941,18 +1004,14 @@ void loop(){
 
   // ------------------ fault evaluation ---------------
   FaultResult fault = evaluate_faults(vel, curr, pwm, cmd_vel, loop_time);
-  g_fault.aux_flags = fault.aux_flags;
-  g_fault.motor_id  = fault.motor_id;
-  g_fault.mode      = fault.mode;
-  
-  prev_mode = g_fault.mode;
+  apply_mode_transition(&fault);
 
-  if(g_fault.mode == MODE_ESTOP){
+  if(system_mode == MODE_ESTOP && prev_mode != MODE_ESTOP){
     engage_estop();
   }
 
   // ------------------ no commands watchdog ---------------
-  if ((now - last_jetson_cmd_ms) > JETSON_CMD_TIMEOUT_MS && system_mode == MODE_NOMINAL) {
+  if (((now - last_jetson_cmd_ms) > JETSON_CMD_TIMEOUT_MS) && (system_mode == MODE_NOMINAL || system_mode == MODE_DEGRADED)) {
     engage_estop();
   }
 
@@ -960,6 +1019,12 @@ void loop(){
   if (Serial.available()){
     parse_packet(Serial);
     last_jetson_cmd_ms = now; 
+  }
+
+  if (system_mode != prev_mode) {
+    if (system_mode >= MODE_DEGRADED)
+      send_fault_report(&g_fault);
+    prev_mode = system_mode;
   }
 
   // ------------------ periodic telemetry ---------------
