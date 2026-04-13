@@ -19,6 +19,8 @@ SECONDARY_SIZE_B    = 5
 CRC_SIZE_B          = 2
 MAX_PACKET_SIZE     = 512
 
+NUM_MOTORS          = 3
+
 # ============================================================
 #  APIDs
 # ============================================================
@@ -110,6 +112,11 @@ class DataTelemetry:
     aux_flags: list
 
 # ============================================================
+#  GLOBAL VARIABLES
+# ============================================================
+seq_tx = 0
+
+# ============================================================
 #  HELPERS
 # ============================================================
 def crc16_ccitt(data):
@@ -157,6 +164,44 @@ def to_le_int32(value):
 def decode_aux_flags(flags):
     return [name for bit, name in AUX_FLAGS.items() if flags & bit]
 
+
+# ============================================================
+#  CCSDS HEADER BUILDERS
+# ============================================================
+def make_packet_info(pkt_type, apid):
+  pkt  = ((CCSDS_VERSION     & 0x7) << 13)
+  pkt |= ((pkt_type          & 0x1) << 12)
+  pkt |= ((CCSDS_SECHDR_FLAG & 0x1) << 11)
+  pkt |= (apid & 0x7FF)
+
+  return pkt
+
+def make_seq_ctrl():
+  ctrl = ((CCSDS_SEQ_FLAG & 0x3) << 14) | (seq_tx & 0x3FFF)
+  seq_tx = seq_tx + 1
+  return ctrl
+
+# ============================================================
+#  PACKET BUILDER
+# ============================================================
+def send_packet(apid, pkt_type, payload, teensy_id):
+    ts = int(time.monotonic() * 1000) & 0xFFFFFFFF
+
+    primary_info = make_packet_info(pkt_type, apid)
+    seq_ctrl     = make_seq_ctrl()
+    data_length  = (SECONDARY_SIZE_B + len(payload) + CRC_SIZE_B) - 1
+
+    primary      = to_le16(primary_info) + to_le16(seq_ctrl) + to_le16(data_length)
+    secondary    = to_le32(ts) + bytes(teensy_id)
+
+    crc_data     = primary + secondary + payload
+    crc          = crc16_ccitt(crc_data)
+
+    return to_le16(SYNC_WORD) + primary + secondary + payload + to_le16(crc)
+
+# ============================================================
+#  PACKET PARSER
+# ============================================================
 def read_exact(ser, n):
     buf = b''
     while len(buf) < n:
@@ -184,30 +229,24 @@ def find_sync(ser):
             else:
                 state = 0
     return False
-
-
         
 def parse_data_telemetry(payload):
     if len(payload) < 37:
         return None
-    enc = [0, 0, 0]
+    enc     = [0, 0, 0]
     curr    = [0, 0, 0]
     vel     = [0, 0, 0]
 
-    i = 0
-    enc[0] = from_le_int32(payload[i:i+4]); i+=4;
-    enc[1] = from_le_int32(payload[i:i+4]); i+=4;
-    enc[2] = from_le_int32(payload[i:i+4]); i+=4;
+    for i in range(NUM_MOTORS):
+        enc[i]  = from_le_int32(payload[4*i:4*(i+1)])
+        vel[i]  = from_le_float(payload[4*(i+NUM_MOTORS):4*(i+NUM_MOTORS+1)])
+        if abs(vel[i]) > MAX_VELOCITY_VALID:
+            print(f"Velocity out of range for motor {i}")
+        curr[i] = from_le_float(payload[4*(i+2*NUM_MOTORS):4*(i+2*NUM_MOTORS+1)])
+        if abs(curr[i]) > MAX_CURRENT_VALID:
+            print(f"Current out of range for motor {i}")
 
-    vel[0] = from_le_float(payload[i:i+4]); i+=4;
-    vel[1] = from_le_float(payload[i:i+4]); i+=4;
-    vel[2] = from_le_float(payload[i:i+4]); i+=4;
-
-    curr[0] = from_le_float(payload[i:i+4]); i+=4;
-    curr[1] = from_le_float(payload[i:i+4]); i+=4;
-    curr[2] = from_le_float(payload[i:i+4]); i+=4;
-
-    aux_flags = payload[i]; i+=1;
+    aux_flags = payload[12*NUM_MOTORS]
     aux = decode_aux_flags(aux_flags)
 
     return DataTelemetry(encoder=enc, velocity=vel, current=curr, aux_flags=aux)
@@ -256,7 +295,13 @@ def parse_packet(ser):
     packet_type = (packet_info >> 12) & 0x1
     secHdrFlag = (packet_info >> 11) & 0x1
     apid = (packet_info) & 0x7FF
-    print(hex(apid))
+
+    if version != CCSDS_VERSION or secHdrFlag != CCSDS_SECHDR_FLAG:
+        print(f"Bad header: version={version} sec_hdr={secHdrFlag}")
+        return None
+    if packet_type != CCSDS_TYPE_TLM:
+        print(f"Expected TLM packet type, got {packet_type}")
+        return None
 
     seq_flags = (seq_ctrl >> 14) & 0x3
     seq_count = (seq_ctrl) & 0x3FFF
@@ -274,7 +319,20 @@ def parse_packet(ser):
     payload = read_exact(ser, payload_size)
     if not payload:
         return None
+       
+    # CRC
+    crc_rx = read_exact(ser, CRC_SIZE_B)
+    if not crc_rx:
+        return None
+    crc_rx = from_le16(crc_rx)
+
+    crc_calc = crc16_ccitt(primary + secondary + payload)
+
+    if crc_rx != crc_calc:
+        print("CRC Error")
+        return None
     
+    payload_parsed = None
     if apid == APID_DATA_TELEMETRY:
         payload_parsed = parse_data_telemetry(payload)
     elif apid == APID_HEARTBEAT:
@@ -288,26 +346,11 @@ def parse_packet(ser):
     elif apid == APID_TIME_SYNC:
         payload_parsed = parse_time_sync_response(payload)
     else:
-        return None
-
-    
-    # CRC
-    crc_rx = read_exact(ser, CRC_SIZE_B)
-    if not crc_rx:
-        return None
-    crc_rx = from_le16(crc_rx)
-
-    crc_calc = crc16_ccitt(primary + secondary + payload)
-
-    if crc_rx != crc_calc:
-        print("CRC Error")
+        print("Unknown APID")
         return None
     
-    # print(payload_parsed)
-    
-    return {"packet_type": packet_type, "apid": apid, "timestamp": ts, "teensy_id": teensy_id,
-            "seq_count": seq_count, "payload": payload_parsed, "primary": primary,
-            "secondary": secondary, "crc_ok": True}
+    return {"apid": apid, "seq_count": seq_count, "timestamp": ts,
+            "teensy_id": teensy_id, "payload": payload_parsed}
 
 
 
