@@ -236,7 +236,7 @@ degraded mode
 #define HEARTBEAT_PERIOD_MS    1000
 #define MAX_LOOP_TIME_MS       1000   
 #define JETSON_CMD_TIMEOUT_MS  5000    // no commands → ESTOP after this
-#define READ_TIMEOUT_MS        500      // To read commands from serial
+#define READ_TIMEOUT_MS        500     // To read commands from serial
 #define INIT_TIMEOUT_MS        2000    // Max time allowed in INIT
 
 // Watchdog kick period (ms) — must be < hardware WDT period

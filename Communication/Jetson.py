@@ -1,7 +1,20 @@
+# ACK and Parallelization for 2 teensys
+
 import serial
 import struct
 import time
 from dataclasses import dataclass
+import sys
+import termios
+import tty
+import math
+
+# ============================================================
+#  Constants for Keyboard Ops
+# ============================================================
+LATERAL_ROVER_LEN      = 0.2564    # m
+LONGITUDINAL_FRONT_LEN = 0.3957    # m
+LONGITUDINAL_REAR_LEN  = 0.3653    # m
 
 # ============================================================
 #  PROTOCOL CONSTANTS  (must match Teensy)
@@ -20,6 +33,8 @@ CRC_SIZE_B          = 2
 MAX_PACKET_SIZE     = 512
 
 NUM_MOTORS          = 3
+LEFT_TEENSY         = 0
+RIGHT_TEENSY        = 1
 
 # ============================================================
 #  APIDs
@@ -114,7 +129,10 @@ class DataTelemetry:
 # ============================================================
 #  GLOBAL VARIABLES
 # ============================================================
-seq_tx = 0
+seq_tx        = 0
+lin_speed_x   = 0.1         # m/s
+lin_speed_y   = 0.1         # m/s
+angular_speed = 0.3         # rad/s
 
 # ============================================================
 #  HELPERS
@@ -177,15 +195,55 @@ def make_packet_info(pkt_type, apid):
   return pkt
 
 def make_seq_ctrl():
+  global seq_tx
   ctrl = ((CCSDS_SEQ_FLAG & 0x3) << 14) | (seq_tx & 0x3FFF)
   seq_tx = seq_tx + 1
   return ctrl
 
 # ============================================================
+#  PAYLOAD BUILDER
+# ============================================================
+def send_vel_servo_cmd(ser, vel, servo_pos, teensy_id):
+    if len(vel) != NUM_MOTORS or len(servo_pos) != NUM_MOTORS:
+        print(f"Expected {NUM_MOTORS} motors")
+        return None
+    
+    payload = b''
+
+    for i, v in enumerate(vel):
+        if not (VEL_CMD_MIN <= v <= VEL_CMD_MAX):
+            print("Velocity out of range")
+            return None
+        payload += to_le_float(v)
+        
+    for i, s in enumerate(servo_pos):
+        if not (SERVO_CMD_MIN <= s <= SERVO_CMD_MAX):
+            print("Servo position out of range")
+            return None
+        payload += to_le_int32(s)
+
+    send_packet(ser, APID_TELECOMMAND, CCSDS_TYPE_TC, payload, teensy_id)
+
+def send_system_cmd(ser, cmd_id, teensy_id):
+    valid = {CMD_STOP_ALL_MOTORS, CMD_ENABLE_MOTORS, CMD_DISABLE_MOTORS, CMD_RESET_ENCODERS, 
+             CMD_ESTOP, CMD_RELEASE_ESTOP, CMD_REBOOT_TEENSY}
+    if cmd_id not in valid:
+        print("Command ID not valid")
+        return None
+    payload = bytes([cmd_id])
+
+    send_packet(ser, APID_SYSTEM_COMMANDS, CCSDS_TYPE_TC, payload, teensy_id)
+
+def send_time_sync_request(ser, teensy_id):
+    t0 = int(time.monotonic_ns * 1e6) & 0xFFFFFFFF
+    payload = to_le32(t0)
+    send_packet(ser, APID_TIME_SYNC, CCSDS_TYPE_TC, payload, teensy_id)
+
+# ============================================================
 #  PACKET BUILDER
 # ============================================================
-def send_packet(apid, pkt_type, payload, teensy_id):
-    ts = int(time.monotonic() * 1000) & 0xFFFFFFFF
+def send_packet(ser, apid, pkt_type, payload, teensy_id):
+    ts = int(time.monotonic_ns() * 1e6) & 0xFFFFFFFF
 
     primary_info = make_packet_info(pkt_type, apid)
     seq_ctrl     = make_seq_ctrl()
@@ -197,10 +255,12 @@ def send_packet(apid, pkt_type, payload, teensy_id):
     crc_data     = primary + secondary + payload
     crc          = crc16_ccitt(crc_data)
 
-    return to_le16(SYNC_WORD) + primary + secondary + payload + to_le16(crc)
+    pkt = to_le16(SYNC_WORD) + primary + secondary + payload + to_le16(crc)
+    ser.write(pkt)
+    ser.flush()
 
 # ============================================================
-#  PACKET PARSER
+#  HELPERS
 # ============================================================
 def read_exact(ser, n):
     buf = b''
@@ -229,7 +289,10 @@ def find_sync(ser):
             else:
                 state = 0
     return False
-        
+
+# ============================================================
+#  PAYLOAD PARSER
+# ============================================================
 def parse_data_telemetry(payload):
     if len(payload) < 37:
         return None
@@ -277,6 +340,9 @@ def parse_time_sync_response(payload):
         return None
     return {'t0': from_le32(payload[0:4]), 't1': from_le32(payload[4:8]), 't2': from_le32(payload[8:12])}
 
+# ============================================================
+#  PACKET PARSER
+# ============================================================
 def parse_packet(ser):
     # SYNC
     if not find_sync(ser):
@@ -352,12 +418,169 @@ def parse_packet(ser):
     return {"apid": apid, "seq_count": seq_count, "timestamp": ts,
             "teensy_id": teensy_id, "payload": payload_parsed}
 
+# ============================================================
+#  Keyboard Ops
+# ============================================================
+def get_key():
+    """Read a single character from keyboard (non-blocking)."""
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        key = sys.stdin.read(1)  # read one character
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return key
+
+def commands():
+    key = get_key()
+
+    if key == 's':
+        factors = [0.0, 0.0, 0.0]
+    elif key == 'w':
+        factors = [1.0, 0.0, 0.0]
+    elif key == 'a':
+        factors = [0.0, 1.0, 0.0]
+    elif key == 'd':
+        factors = [0.0, -1.0, 0.0]
+    elif key == 'x':
+        factors = [-1.0, 0.0, 0.0]
+    elif key == 'q':
+        factors = [1.0, 1.0, 0.0]
+    elif key == 'e':
+        factors = [1.0, -1.0, 0.0]
+    elif key == 'z':
+        factors = [-1.0, 1.0, 0.0]
+    elif key == 'c':
+        factors = [-1.0, -1.0, 0.0]
+
+    elif key == 'm':
+        linear_speed_x += 0.01
+        print("Increased linear speed x to ", linear_speed_x)
+    elif key == ',':
+        linear_speed_x -= 0.01
+        print("Decreased linear speed x to ", linear_speed_x)
+    elif key == 'j':
+        linear_speed_y += 0.01
+        print("Increased linear speed y to ", linear_speed_y)
+    elif key == 'k':
+        linear_speed_y -= 0.01
+        print("Decreased linear speed y to ", linear_speed_y)
+    elif key == 'u':
+        angular_speed += 0.01
+        print("Increased angular speed z to ", angular_speed)
+    elif key == 'i':
+        angular_speed -= 0.01
+        print("Decreased angular speed z to ", angular_speed)
+    
+    elif key == 'Q':
+        print('indies Q')
+        factors = [1.0, 1.0, 1.0]
+    elif key == 'E':
+        factors = [1.0, -1.0, -1.0]
+    elif key == 'Z':
+        factors = [-1.0, 1.0, 1.0]
+    elif key == 'C':
+        factors = [-1.0, -1.0, -1.0]
+    elif key == 'r':
+        factors = [1.0, 1.0, -1.0]
+    elif key == 'y':
+        factors = [1.0, -1.0, 1.0]
+    elif key == 'v':
+        factors = [-1.0, 1.0, -1.0]
+    elif key == 'n':
+        factors = [-1.0, -1.0, 1.0]
+    elif key == 'f':
+        factors = [0.0, 0.0, 1.0]            
+    elif key == 'h':
+        factors = [0.0, 0.0, -1.0]
+
+    elif key == 'p':
+        exit()
+
+    if key in ['w', 'a', 's', 'd', 'x', 'q', 'e', 'z', 'c', 'Q', 'E', 'Z', 'C', 'r', 'v', 'y', 'n', 'f', 'h']:
+        actual = [lin_speed_x, lin_speed_y, angular_speed]
+        command = [x*y for x,y in zip(factors,actual)]
+        actuation_commands(command)
+
+def actuation_commands(command):
+
+    vx, vy, omega = command
+
+    # Steer angles
+    # angle1
+    gamma1 = math.atan2((vy + (math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2)))*omega*math.cos(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_FRONT_LEN)))), (vx - ((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2))*omega*math.sin(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_FRONT_LEN)))))
+
+    # angle2
+    gamma2 = math.atan2((vy + (math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2)))*omega*math.cos(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_FRONT_LEN)))), (vx + ((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2))*omega*math.sin(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_FRONT_LEN)))))
+
+    # angle3
+    gamma3 = math.atan2(vy, (vx - ((LATERAL_ROVER_LEN)*omega)))
+
+    # angle4
+    gamma4 = math.atan2(vy, (vx + ((LATERAL_ROVER_LEN)*omega)))
+
+    # angle5    
+    gamma5 = math.atan2((vy - (math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2)))*omega*math.cos(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_REAR_LEN)))), (vx - ((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2))*omega*math.sin(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_REAR_LEN)))))
+
+    # angle6
+    gamma6 = math.atan2((vy - (math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2)))*omega*math.cos(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_REAR_LEN)))), (vx + ((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2))*omega*math.sin(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_REAR_LEN)))))
+    print("before addinf n50", gamma1, gamma2, gamma3, gamma4, gamma5, gamma6)
+    
+    # The math assumes the range of steering is from -90 to +90 but the servo operates in 0 to 180  and the conversion happens below (90-theta)
+    gammas = [gamma1, gamma2, gamma3, gamma4, gamma5, gamma6]
+    gamma = [90-math.degrees(g) for g in gammas]
+    print("gamma: ", gamma)
+    
+    # Wheel velocities
+    
+    # w1
+    w1 =  (math.sqrt(math.pow((vy + (math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2)))*omega*math.cos(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_FRONT_LEN)))),2) + math.pow((vx - ((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2))*omega*math.sin(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_FRONT_LEN)))),2)))   /  0.1 #math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2)))
+
+    # w2
+    w2 =  (math.sqrt(math.pow((vy + (math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2)))*omega*math.cos(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_FRONT_LEN)))),2) + math.pow((vx - ((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2))*omega*math.sin(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_FRONT_LEN)))),2)))   /  0.1 #math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_FRONT_LEN,2)))
+
+    # w3
+    w3 = (math.sqrt(math.pow(vy,2) + math.pow((vx - ((LATERAL_ROVER_LEN)*omega)),2)))  /   0.1 #LATERAL_ROVER_LEN 
+
+    # w4
+    w4 = (math.sqrt(math.pow(vy,2) + math.pow((vx + ((LATERAL_ROVER_LEN)*omega)),2)))  /   0.1 #LATERAL_ROVER_LEN 
+
+    # w5
+    w5 = (math.sqrt(math.pow((vy + (math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2)))*omega*math.cos(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_REAR_LEN)))),2) +  math.pow((vx - ((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2))*omega*math.sin(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_REAR_LEN)))),2)))    /    0.1 #math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2)))
+
+    #w6
+    w6 = (math.sqrt(math.pow((vy - (math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2)))*omega*math.cos(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_REAR_LEN)))),2) + math.pow((vx + ((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2))*omega*math.sin(math.atan2(LATERAL_ROVER_LEN,LONGITUDINAL_REAR_LEN)))),2)))    /    0.1 #math.sqrt((math.pow(LATERAL_ROVER_LEN,2)+math.pow(LONGITUDINAL_REAR_LEN,2)))
+
+    
+    # Coversion of rad/s of wheel to RPM (60/2pi)
+    w = [w1, w2, w3, w4, w5, w6]
+    RPM = [ws*60/(2*math.M_PI) for ws in w]
+    print("RPM: ", RPM)
+
+    vel_cmd_left    = [RPM[0], RPM[2], RPM[4]]
+    servo_cmd_left  = [gamma[0], gamma[2], gamma[4]]
+    vel_cmd_right   = [RPM[1], RPM[3], RPM[5]]
+    servo_cmd_right = [gamma[1], gamma[3], gamma[5]]
+
+    send_vel_servo_cmd(ser_left,  vel_cmd_left,  servo_cmd_left,  LEFT_TEENSY)
+    send_vel_servo_cmd(ser_right, vel_cmd_right, servo_cmd_right, RIGHT_TEENSY)
 
 
-ser = serial.Serial('/dev/ttyUSB0', 115200)
+    
+
+
+
+
+# ============================================================
+#  Main
+# ============================================================
+ser_left  = serial.Serial('/dev/ttyUSB0', 115200)
+ser_right = serial.Serial('/dev/ttyUSB1', 115200)
 while True:
-    packet = parse_packet(ser)
-    if packet is None:
-        continue
+    # packet = parse_packet(ser)
+    # if packet is None:
+    #     continue
+    commands()
 
     # print(packet["payload"])
