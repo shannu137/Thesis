@@ -138,9 +138,9 @@ class DataTelemetry:
 #  GLOBAL VARIABLES
 # ============================================================
 seq_tx        = 0
-lin_speed_x   = 0.1         # m/s
-lin_speed_y   = 0.1         # m/s
-angular_speed = 0.3         # rad/s
+lin_speed_x   = 0.1          # m/s
+lin_speed_y   = 0.05         # m/s
+angular_speed = 0.001        # rad/s
 
 # ============================================================
 #  HELPERS
@@ -452,10 +452,10 @@ def commands():
         factors = [0.0, 0.0, 0.0]
     elif key == 'w':
         factors = [1.0, 0.0, 0.0]
-    elif key == 'a':
-        factors = [0.0, 1.0, 0.0]
-    elif key == 'd':
-        factors = [0.0, -1.0, 0.0]
+#    elif key == 'a':
+ #       factors = [0.0, 1.0, 0.0]
+  #  elif key == 'd':
+   #     factors = [0.0, -1.0, 0.0]
     elif key == 'x':
         factors = [-1.0, 0.0, 0.0]
     elif key == 'q':
@@ -468,22 +468,22 @@ def commands():
         factors = [-1.0, -1.0, 0.0]
 
     elif key == 'm':
-        lin_speed_x += 0.01
+        lin_speed_x += 0.005
         print("Increased linear speed x to ", lin_speed_x)
     elif key == ',':
-        lin_speed_x -= 0.01
+        lin_speed_x -= 0.005
         print("Decreased linear speed x to ", lin_speed_x)
     elif key == 'j':
-        lin_speed_y += 0.01
+        lin_speed_y += 0.005
         print("Increased linear speed y to ", lin_speed_y)
     elif key == 'k':
-        lin_speed_y -= 0.01
+        lin_speed_y -= 0.005
         print("Decreased linear speed y to ", lin_speed_y)
     elif key == 'u':
-        angular_speed += 0.01
+        angular_speed += 0.001
         print("Increased angular speed z to ", angular_speed)
     elif key == 'i':
-        angular_speed -= 0.01
+        angular_speed -= 0.001
         print("Decreased angular speed z to ", angular_speed)
     
     elif key == 'Q':
@@ -511,7 +511,7 @@ def commands():
     elif key == 'p':
         exit()
 
-    if key in ['w', 'a', 's', 'd', 'x', 'q', 'e', 'z', 'c', 'Q', 'E', 'Z', 'C', 'r', 'v', 'y', 'n', 'f', 'h']:
+    if key in ['w', 's', 'x', 'q', 'e', 'z', 'c', 'Q', 'E', 'Z', 'C', 'r', 'v', 'y', 'n', 'f', 'h']:
         actual = [lin_speed_x, lin_speed_y, angular_speed]
         command = [x*y for x,y in zip(factors,actual)]
         actuation_commands(command)
