@@ -76,10 +76,10 @@ function F = constraints(u, inputs, terrain, params)
         n_proj = n_terr - dot(n_terr, y_axle) * y_axle;
         n_proj = n_proj / norm(n_proj);
 
-        % ================= CONSTRAINTS =================
+        %% CONSTRAINTS
 
         % (1) Contact on surface
-        F(i) = (zc - z_terr) / params.wheel_radius;
+        F(i) = (zc - z_terr);
 
         % (2) Orientation match
         F(i+6) = atan2(dot(cross(z_axle, n_proj), y_axle), dot(z_axle, n_proj)) - delta(i);
