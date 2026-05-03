@@ -1,26 +1,4 @@
-[t_out, s_out, v_out, sw, MVC,F] = topp_fn(r, dr, ddr, s_grid,params);
-
-    fprintf('Total time : %.4f s\n', t_out(end));
-    fprintf('Switches at s = '); fprintf('%.4f  ', sw); fprintf('\n');
-
-    figure('Color','w','Position',[80 80 1200 420]);
-
-    subplot(1,3,2); hold on;
-    plot(s_out, v_out, 'b-', 'LineWidth',2);
-    % for s_sw = sw
-    %     xline(s_sw, 'r--', 'LineWidth',1.2);
-    % end
-    xlabel('s'); ylabel('v = ds/dt');
-    title('Velocity profile  (red = switches)'); grid on;
-    hold on
-    plot(s_out, MVC, LineWidth=1.5);
-
-    subplot(1,3,3);
-    plot(t_out, s_out, 'r-', 'LineWidth',2);
-    xlabel('t (s)'); ylabel('s');
-    title('Time law s(t)'); grid on;
-
-function [t_out, s_out, v_out, switches, MVC,F] = topp_fn(r,dr,ddr,s_grid,params)
+function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
     N = length(s_grid);
     MAX_BINARY = 80;
     MAX_OUTER = 4*N;
@@ -56,7 +34,7 @@ function [t_out, s_out, v_out, switches, MVC,F] = topp_fn(r,dr,ddr,s_grid,params
     % Adaptive tolerances
     mvc_med    = max(median(MVC(isfinite(MVC))), 1e-12);
     TOL_touch  = mvc_med * 1e-3;   % MVC-touch window in Step 4
-    TOL_cross  = mvc_med * 5e-3;   % arc-crossing window  in Step 5
+    TOL_cross  = mvc_med * 5e-3;     % arc-crossing window  in Step 5
     TOL_binary = mvc_med * 1e-5;   % binary search stop criterion
 
     % Backward integration
@@ -225,9 +203,7 @@ function [t_out, s_out, v_out, switches, MVC,F] = topp_fn(r,dr,ddr,s_grid,params
     t_out = zeros(N,1);
     for k = 1:N-1
         v_avg = 0.5*(v_profile(k) + v_profile(k+1));
-        if v_avg < 1e-12
-            v_avg = max(v_avg, 1e-12);
-        end
+        v_avg = max(v_avg, 1e-9);
         t_out(k+1) = t_out(k) + ds / v_avg;
     end
 
