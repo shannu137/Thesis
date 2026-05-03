@@ -1,5 +1,5 @@
 function wps_m = get_astar_wp(start, goal, terrain, params)
-% Returns way points [x,y] coordinates in terrain frame (m) 
+% Returns way points coordinates in terrain frame (m)
 
     % Cost weights
     w_d     = params.cost_w_distance;
@@ -195,7 +195,7 @@ function wps_m = get_astar_wp(start, goal, terrain, params)
     plot(xs(bx), ys(by), 'ks', 'MarkerFaceColor','k');
     
     % path
-    plot(wps_m(:,1), wps_m(:,2), ...
+    plot(wps(:,1), wps(:,2), ...
         'w', 'LineWidth', 2);
     
     % start and goal
@@ -204,13 +204,13 @@ function wps_m = get_astar_wp(start, goal, terrain, params)
 
     % Path
     figure; surf(terrain.X,terrain.Y,terrain.Z); hold on;
+    plot3(wps(:,1), wps(:,2), ...
+          arrayfun(@(k) terrain.query(wps(k,1),wps(k,2)),1:size(wps,1))' + 0.05,...
+          'r','LineWidth',2);
     shading interp 
     colormap(gray) 
     axis equal
     title('A* path');
-    plot3(wps_m(:,1), wps_m(:,2), ...
-          arrayfun(@(k) Z_grid(wps(k,2),wps(k,1)),1:size(wps,1))' + 0.05,...
-          'r','LineWidth',2);
 end
 
 function h = heuristic(n, g, dx, dy, params)

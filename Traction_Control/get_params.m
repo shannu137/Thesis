@@ -9,12 +9,14 @@ function params = get_params()
     params.terrain_numHills   = 10;
     params.terrain_numCraters = 10;
     
-    params.rover_gnd_clr      = 0.3; % rover ground clearance [m]
+    params.rover_gnd_clr      = 0.3;  % rover ground clearance [m]
     params.rover_length       = 0.55; % rover length [m]
     params.rover_width        = 0.65; % rover width  [m]
     params.rover_height       = 0.3;  % rover height [m]
     params.rover_slope_limit  = deg2rad(25);
     params.rover_rough_limit  = 0.1;
+    params.rover_vel_limit    = 0.1;  % m/s
+    params.rover_acc_limit    = 0.05;  % m/s^2
     
     params.rover_d_D          = 0;
     params.rover_a_D          = 0;
@@ -31,6 +33,4 @@ function params = get_params()
     params.cost_w_turn      = 0.1;
     params.cost_w_slope     = 50;
     params.cost_w_rough     = 10;
-
-    params.N_astar = 257;
 end
