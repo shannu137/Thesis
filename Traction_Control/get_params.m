@@ -33,4 +33,6 @@ function params = get_params()
     params.cost_w_turn      = 0.1;
     params.cost_w_slope     = 50;
     params.cost_w_rough     = 10;
+
+    params.N_path_samples = 10000;  % #samples for s-parametrization in build_path
 end

@@ -1,10 +1,18 @@
 function [r, dr, ddr, s_grid] = build_path(wps, params)
 % wps: [K x 2] (x,y) way points coordinates in terrain frame (m)
 
-    N_eval = params.Ttotal * params.fs;
+    N_eval = params.N_path_samples;
     
     % Chord length parameterization
-    K = length(wps);
+    K = size(wps,1);
+    if K == 1
+        r      = repmat(wps(1,:), N_eval, 1);   % stay at the point
+        dr     = zeros(N_eval, 2);
+        ddr    = zeros(N_eval, 2);
+        s_grid = zeros(N_eval, 1);
+        return;
+    end
+
     s_nodes = zeros(1,K);
     for i = 2:K
         dx_i = (wps(i,1) - wps(i-1,1));

@@ -4,7 +4,16 @@ function [sol, xc_all, yc_all, zc_all] = solve_rover_pose(inputs, terrain, param
     % [xR, yR, yawR, psi1..psi6]
     % Unknowns:
     % [zR, roll, pitch, beta, rho1, rho2, delta1..delta6]
-    u0 = [0.2; 0; 0; 0; 0; 0; zeros(6,1)];
+
+    z_0 = terrain.query(inputs(1), inputs(2)) + params.rover_gnd_clr;
+    pitch_0 = atan(dzdx);
+    roll_0  = atan(dzdy);
+    beta_0  = pitch_0 / 2;
+    rho1_0  = pitch_0 / 4;
+    rho2_0  = pitch_0 / 4;
+    delta_0 = repmat(pitch_0, 6, 1);
+
+    u0 = [z_0; roll_0; pitch_0; beta_0; rho1_0; rho2_0; delta_0];
 
     options = optimoptions('fsolve','Display','iter','TolFun',1e-6,'TolX',1e-6);
 

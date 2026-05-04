@@ -1,11 +1,11 @@
 function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
     N = length(s_grid);
-    MAX_BINARY = 80;
-    MAX_OUTER = 4*N;
-
     v_max = params.rover_vel_limit;
     a_max = params.rover_acc_limit;
     ds = mean(diff(s_grid));
+    
+    MAX_BINARY = 80;
+    MAX_OUTER = 4*N;
 
     A = zeros(N,1);
     B = zeros(N,1);
@@ -33,8 +33,8 @@ function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
 
     % Adaptive tolerances
     mvc_med    = max(median(MVC(isfinite(MVC))), 1e-12);
-    TOL_touch  = mvc_med * 1e-3;   % MVC-touch window in Step 4
-    TOL_cross  = mvc_med * 5e-3;     % arc-crossing window  in Step 5
+    TOL_touch  = mvc_med * 1e-4;   % MVC-touch window in Step 4
+    TOL_cross  = mvc_med * 5e-2;   % arc-crossing window  in Step 5
     TOL_binary = mvc_med * 1e-5;   % binary search stop criterion
 
     % Backward integration
@@ -42,20 +42,22 @@ function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
     F(N) = 0;
     for k = N-1:-1:1
         v_curr = max(F(k+1),1e-12);
-        [L, U] = acc_bounds(k+1, v_curr,A,B,C,a_max);
+        [L, ~] = acc_bounds(k+1, v_curr,A,B,C,a_max);
         v2 = v_curr^2 - 2*L*ds; % backward step
         if v2 < 0
             v2 = 0;
         end
         v_new = sqrt(v2);
-        F(k) = min(v_new, MVC(k));
+        F(k) = v_new;
 
         % if F hits MVC
-        if U < L
+        if v_new >= MVC(k) + TOL_touch
             F(1:k) = MVC(1:k);
             break
         end
     end
+    F = min(F, MVC);
+    F = max(F, 0);
 
     % Main Loop
     switches     = [];
@@ -105,8 +107,9 @@ function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
             if v >= F(k+1) + TOL_cross
                 switches(end+1) = s_grid(k+1);
                 v_profile = fill_arc(v_profile, k_start, k+1, v_start, true,A,B,C,a_max,MVC,ds);
+                v_profile(k+1) = v;
 
-                for j = k+1:N
+                for j = k+2:N
                     v_profile(j) = F(j);
                 end
                 hit_F = true;
@@ -143,7 +146,8 @@ function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
             else
                 k_tan = k_touch;
                 v_tan = v_touch;
-                v_low = v_test;  % to refine upward
+                % v_low = v_test;  % to refine upward
+                break;
             end
 
             if (v_high - v_low) < TOL_binary
@@ -156,6 +160,7 @@ function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
         % again.
         if v_tan < TOL_touch && k_tan == k_lim
             v_profile(k_lim) = MVC(k_lim);
+            
             if k_lim < N
                 k_tan = k_lim + 1;
                 v_tan = MVC(k_tan);
@@ -170,7 +175,7 @@ function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
 
         switches(end+1) = s_grid(k_sw);
 
-        v_profile = fill_arc(v_profile, k_start, k_sw, v_start, true,A,B,C,a_max, MVC,ds);
+        v_profile = fill_arc(v_profile, k_start, k_sw-1, v_start, true,A,B,C,a_max, MVC,ds);
         v_profile(k_sw) = v_sw;
 
         v_profile = fill_arc(v_profile, k_sw, k_tan, v_sw, false,A,B,C,a_max, MVC,ds);
@@ -196,7 +201,7 @@ function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
     end
 
     v_profile(N) = 0;
-    v_profile    = max(min(v_profile, MVC), 0);
+    v_profile    = max(min(v_profile, min(MVC,F)), 0);
     v_profile(isnan(v_profile)) = 0;
 
     % recover time
@@ -219,6 +224,8 @@ function [L, U] = acc_bounds(k,v,A,B,C,a_max)
         disc = 0;
     end
     sq_disc = sqrt(disc);
+
+    Ak = max(Ak, 1e-12);
     L = (-Bk*v^2 - sq_disc) / Ak; % max deceleration
     U = (-Bk*v^2 + sq_disc) / Ak; % max acceleration
 end
@@ -237,7 +244,7 @@ function vel_prof = fill_arc(vel_prof, k_start, k_end, v0, use_U,A,B,C,a_max,MVC
         if v2 < 0
             v2 = 0;
         end
-        v = min(sqrt(v2), MVC(j+1));
+        v = sqrt(v2);
         vel_prof(j+1) = v;
     end
 end
@@ -269,14 +276,16 @@ function [k_touch, v_touch, outcome] = integrate_fwd(k0, v0, MVC,A,B,C,a_max, ds
 
         % track best approach to MVC from below
         gap = MVC(k+1) - v_next;
-        if gap >= 0 && gap < best_gap
-            best_gap = gap;
-            k_touch = k+1;
-            v_touch = v_next;
-        end
+        % if gap >= 0 && gap < best_gap
+        %     best_gap = gap;
+        %     k_touch = k+1;
+        %     v_touch = v_next;
+        % end
 
         % Within touch tolerance
         if gap >= 0 && gap < TOL_touch
+            k_touch = k+1;
+            v_touch = v_next;
             outcome = 0;
             return;
         end
@@ -285,9 +294,10 @@ function [k_touch, v_touch, outcome] = integrate_fwd(k0, v0, MVC,A,B,C,a_max, ds
     end
 
     % reached end: if we get close aat some point, accept it
-    if best_gap < inf && best_gap < 5*TOL_touch
-        outcome = 0;
-    end
+    % if best_gap < 3*TOL_touch
+    %     disp(k_touch)
+    %     outcome = 0;
+    % end
     % else outcome stays at -1
 end
 
@@ -309,7 +319,7 @@ function [k_sw, v_sw] = integrate_bwd_to_arc(k_tan,v_tan,v_profile,k_arc_start,A
         if ~isnan(vp_prev)
             if v_back <= vp_prev + TOL_cross
                 k_sw = k-1;
-                v_sw = vp_prev;
+                v_sw = min(v_back,vp_prev);
                 return;
             end
         end
