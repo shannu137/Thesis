@@ -6,75 +6,25 @@ terrain = load("terrain_sample2.mat").terrain;
 
 start = [60,90];
 goal  = [90,60];
-wps   = get_astar_wp(start, goal, terrain, params);
-%%
-[r,dr,ddr,s]   = build_path(wps, params);
-%%
-[t,s,sdot,sw,MVC] = topp(dr,ddr,s,params);
 
-fprintf('Total time : %.4f s\n', t(end));
-figure('Color','w');
+traj = build_trajectory(start,goal,terrain,params);
+plot_traj(traj)
 
-subplot(1,2,1); hold on;
-plot(s, sdot, 'b-', 'LineWidth',2);
-xlabel('s'); ylabel('v = ds/dt');
-title('Velocity profile'); grid on;
-plot(s, MVC, 'r', LineWidth=1.5);
-legend('v', 'MVC')
-
-subplot(1,2,2);
-plot(t, s, 'r-', 'LineWidth',2);
-xlabel('t (s)'); ylabel('s');
-title('Time law s(t)'); grid on;
+[traj, dhParams] = get_rover_parameters(traj,terrain,params);
 
 %%
-sdot = medfilt1(sdot, 5);          % fix before anything else uses it                                         % smooth sdot first
-sddot = (sdot(2:end).^2 - sdot(1:end-1).^2) ./ (2 * (diff(s) + 1e-12));
-sddot = medfilt1(sddot, 11);                                        % smooth sddot too
-sddot(end+1) = sddot(end);
+bekker(length(traj.t)) = struct( ...
+    'Fsoil',    [], ...
+    'Fn_check', [], ...
+    'T_wheel',  [], ...
+    'theta1',   [], ...
+    'theta2',   [], ...
+    'z0',       [], ...
+    'W_wheel',  [] );
 
-x = r;
-v = dr .* sdot;
-a = ddr .* (sdot.^2) + dr .* sddot;
-
-%%
-figure;
-plot(x(:,1), x(:,2), 'b', 'LineWidth', 2);
-axis equal;
-grid on;
-title('Trajectory x(t)');
-xlabel('x'); ylabel('y');
-
-figure;
-plot(t, x(:,1), 'r', t, x(:,2), 'b');
-grid on;
-legend('x','y');
-title('Position components');
-xlabel('t'); ylabel('position');
-
-figure;
-plot(t, v(:,1), 'r', t, v(:,2), 'b');
-grid on;
-legend('v_x','v_y');
-title('Velocity components');
-xlabel('t'); ylabel('velocity');
-
-a_max = params.rover_acc_limit * ones(size(t));
-figure;
-plot(t, a(:,1), 'r', t, a(:,2), 'b');hold on
-grid on;
-legend('a_x','a_y');
-title('Acceleration components');
-xlabel('t'); ylabel('acceleration');
-
-figure;
-plot(t, vecnorm(v,2,2),'k','LineWidth',2);
-grid on;
-title('Speed ||v(t)||');
-xlabel('t'); ylabel('speed');
-
-figure;
-plot(t, vecnorm(a,2,2),'b','LineWidth',2);
-grid on;
-title('Acceleration ||a(t)||');
-xlabel('t'); ylabel('acceleration'); ylim([0,0.1])
+N = length(traj.t);
+for i = 1:N
+    disp(i)
+    s = 0.002*(i-1)*ones(6,1);
+    bekker(i) = compute_bekker(traj.x(i,:)', traj.euler(i,:)', s, terrain, params, dhParams(i));
+end

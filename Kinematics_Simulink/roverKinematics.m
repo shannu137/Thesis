@@ -32,7 +32,7 @@ wheels(3,i) = psi(i);
 end
 disp(psi*180/pi)
 disp(theta_dot*60/(2*pi))
-forward_kinematics([0;0], [zeros(6,1)'; theta_dot'], roverParams, dhParams, wheels, ones(6,1))
+% forward_kinematics([0;0], [zeros(6,1)'; theta_dot'], roverParams, dhParams, wheels, ones(6,1))
 
 %% ================= PARAMETERS ======================
 dt = 0.1;          % timestep [s]
@@ -250,7 +250,7 @@ function [psi_c, theta_dot_c] = inverse_kinematics(desired_states, sensed_states
         PHI_X = phix_dot_s - J_psi(4)*psi_dot_c;
         PHI_Y = phiy_dot_s - b*dhParams(4) + rho_dot(i);
         PHI_Z = phiz_dot_d - J_psi(6)*psi_dot_c;
-        
+
         psi = wheels(3,i);
         wheels(3,i) = psi_c(i);
 

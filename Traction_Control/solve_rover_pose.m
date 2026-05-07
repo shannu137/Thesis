@@ -1,25 +1,15 @@
-function [sol, xc_all, yc_all, zc_all] = solve_rover_pose(inputs, terrain, params)
+function [sol, contact_points] = solve_rover_pose(inputs, prev_sol, terrain, params)
 
     % Inputs:
     % [xR, yR, yawR, psi1..psi6]
     % Unknowns:
     % [zR, roll, pitch, beta, rho1, rho2, delta1..delta6]
 
-    z_0 = terrain.query(inputs(1), inputs(2)) + params.rover_gnd_clr;
-    pitch_0 = atan(dzdx);
-    roll_0  = atan(dzdy);
-    beta_0  = pitch_0 / 2;
-    rho1_0  = pitch_0 / 4;
-    rho2_0  = pitch_0 / 4;
-    delta_0 = repmat(pitch_0, 6, 1);
+    options = optimoptions('fsolve','Display','none','TolFun',1e-4,'TolX',1e-4);
 
-    u0 = [z_0; roll_0; pitch_0; beta_0; rho1_0; rho2_0; delta_0];
+    sol = fsolve(@(u) constraints(u, inputs, terrain, params), prev_sol, options);
 
-    options = optimoptions('fsolve','Display','iter','TolFun',1e-6,'TolX',1e-6);
-
-    sol = fsolve(@(u) constraints(u, inputs, terrain, params), u0, options);
-
-    [xc_all, yc_all, zc_all] = compute_contacts(sol, inputs, params);
+    contact_points = compute_contacts(sol, inputs, params);
 
 end
 
@@ -135,7 +125,7 @@ function C = singleAxisDCM(axis, angle)
     end
 end
 
-function [xc_all, yc_all, zc_all] = compute_contacts(u, inputs, params)
+function xc_all = compute_contacts(u, inputs, params)
 
     zR    = u(1);
     roll  = u(2);
@@ -154,9 +144,7 @@ function [xc_all, yc_all, zc_all] = compute_contacts(u, inputs, params)
     R_N2R = singleAxisDCM(1, roll) * singleAxisDCM(2, pitch) * singleAxisDCM(3, yawR);
     R_R2N = R_N2R';
 
-    xc_all = zeros(6,1);
-    yc_all = zeros(6,1);
-    zc_all = zeros(6,1);
+    xc_all = zeros(3,6);
 
     for i = 1:6
 
@@ -175,8 +163,6 @@ function [xc_all, yc_all, zc_all] = compute_contacts(u, inputs, params)
         % transform to world
         p_contact = [xR; yR; zR] + R_R2N * p_local;
 
-        xc_all(i) = p_contact(1);
-        yc_all(i) = p_contact(2);
-        zc_all(i) = p_contact(3);
+        xc_all(:,i) = p_contact;
     end
 end
