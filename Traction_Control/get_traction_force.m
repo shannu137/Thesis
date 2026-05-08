@@ -1,32 +1,49 @@
-function bekker = compute_bekker(rover_pos, rover_att, s, terrain, params, dhParams)
+function bekker = get_traction_force(traj, s, terrain, params, dhParams)
+    bekker(length(traj.t)) = struct( ...
+        'Fsoil',    [], ...
+        'Fn_check', [], ...
+        'T_wheel',  [], ...
+        'theta1',   [], ...
+        'theta2',   [], ...
+        'z0',       [], ...
+        'W_wheel',  [] );
 
-    W_total  = params.rover_mass * params.gravity;
-    W_wheel  = W_total / 6;          % [N] per wheel 
+    for i = 1:length(traj.t)
+        rover_pos  = traj.x(:,i);
+        rover_att  = traj.euler(:,i);
+        s_t        = s(:,i);
+        dhParams_t = dhParams(i);
 
-    Fsoil_all    = zeros(6,1);
-    Fn_check_all = zeros(6,1);
-    T_wheel_all  = zeros(6,1);
-    theta1_all   = zeros(6,1);
-    theta2_all   = zeros(6,1);
-    z0_all       = zeros(6,1);
-    W_all        = W_wheel * ones(6,1);
-
-    R_N2R = singleAxisDCM(1, rover_att(1)) * singleAxisDCM(2, rover_att(2)) * singleAxisDCM(3, rover_att(3));
-    R_R2N = R_N2R';
-
-    for i = 1:6
-        [Fsoil_all(i), Fn_check_all(i), T_wheel_all(i), theta1_all(i), theta2_all(i), z0_all(i)] = ...
-            bisect_bekker(i, W_wheel, s(i), rover_pos, R_R2N, terrain, params, dhParams);
+        W_total  = params.rover_mass * params.gravity;
+        W_wheel  = W_total / 6;          % [N] per wheel 
+    
+        Fsoil_all    = zeros(6,1);
+        Fn_check_all = zeros(6,1);
+        T_wheel_all  = zeros(6,1);
+        theta1_all   = zeros(6,1);
+        theta2_all   = zeros(6,1);
+        z0_all       = zeros(6,1);
+        W_all        = W_wheel * ones(6,1);
+    
+        R_N2R = singleAxisDCM(1, rover_att(1)) * singleAxisDCM(2, rover_att(2)) * singleAxisDCM(3, rover_att(3));
+        R_R2N = R_N2R';
+    
+        for w = 1:6
+            [Fsoil_all(w), Fn_check_all(w), T_wheel_all(w), theta1_all(w), theta2_all(w), z0_all(w)] = ...
+                bisect_bekker(w, W_wheel, s_t(w), rover_pos, R_R2N, terrain, params, dhParams_t);
+            if(Fsoil_all(w) < 0)
+                Fsoil_all(w) = 0;
+            end
+        end
+    
+        bekker(i).Fsoil    = Fsoil_all;
+        bekker(i).Fn_check = Fn_check_all;
+        bekker(i).T_wheel  = T_wheel_all;
+        bekker(i).theta1   = theta1_all;
+        bekker(i).theta2   = theta2_all;
+        bekker(i).z0       = z0_all;
+        bekker(i).W_wheel  = W_all;
     end
-
-    bekker.Fsoil    = Fsoil_all;
-    bekker.Fn_check = Fn_check_all;
-    bekker.T_wheel  = T_wheel_all;
-    bekker.theta1   = theta1_all;
-    bekker.theta2   = theta2_all;
-    bekker.z0       = z0_all;
-    bekker.W_wheel  = W_all;
-
 end
 
 function [Fsoil, Fn_check, T_wheel, theta1, theta2, z0] = bisect_bekker(wheel_number, W_wheel, s, rover_pos, R_R2N, terrain, params, dhParams)

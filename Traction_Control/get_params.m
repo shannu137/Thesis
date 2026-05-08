@@ -49,4 +49,37 @@ function params = get_params()
     params.soil_c    = 0.017e4;     % [Pa]
     params.soil_phi  = deg2rad(35); % [rad]
     params.soil_K    = 1.78e-2;     % [m]
+
+    % d2r = pi / 180;
+    % g = params.gravity;
+    % 
+    % params.IMU = imuSensor('accel-gyro', ...
+    %             'Accelerometer', accelparams('MeasurementRange', 2 * g, ...       % +-2g
+    %                                          'Resolution', 1e-03 * g, ...         % 1 mg/LSB
+    %                                          'NoiseDensity', 220e-06 * g, ...     % 220 µg/sqrt(Hz)
+    %                                          'ConstantBias', 60e-03 * g, ...      % +-60 mg
+    %                                          'TemperatureBias', 0.5e-03 * g), ... % +-0.5 mg/deg-C                 
+    %             'Gyroscope', gyroparams('MeasurementRange', 250 * d2r, ...        % +-250 dps
+    %                                     'Resolution', 8.75e-03 * d2r, ...         % 8.75 mdps/digit
+    %                                     'NoiseDensity', 0.03 * d2r, ...           % 0.03 dps/sqrt(Hz)
+    %                                     'ConstantBias', 10 * d2r, ...             % +-10 dps (typical)
+    %                                     'TemperatureBias', 0.03 * d2r), ...       % +-0.03 dps/deg-C
+    %             'ReferenceFrame', 'ENU'); 
+
+    params.motorctrl_Kff  = 75;
+    params.motorctrl_Kp   = 35;
+    params.motorctrl_Ki   = 15;
+    params.motor_V_supply = 12; % [V]
+
+    params.motor_L = 0.2; % [H]
+    params.motor_J = 0.1; % []
+    params.motor_Kt = 2.9050;
+    params.motor_Ke = 2.9050;
+    params.motor_R  = 4.3576;
+    params.motor_b  = 0.3783;
+
+    params.encoder_CPR = 28080;
+    
+    params.noise_enc  = 0.01;
+    params.noise_curr = 0.01;
 end

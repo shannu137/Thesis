@@ -1,4 +1,4 @@
-function traj = build_trajectory(start, goal, terrain, params)
+function traj = generate_trajectory(start, goal, terrain, params)
 
     % --- Path planning ---
     wps             = get_astar_wp(start, goal, terrain, params);
@@ -64,26 +64,25 @@ function traj = build_trajectory(start, goal, terrain, params)
     F_yawdot = griddedInterpolant(t, yawdot_des, 'pchip');
 
     % --- Pack struct ---
-    traj.t          = t';
-    traj.x          = x_full;
-    traj.v          = v_full;
-    traj.a          = a_full;
-    traj.des_states = [v_body_des, yawdot_des];
-    traj.yaw_des    = yaw_des;
+    traj.t          = t;
+    traj.x          = x_full';
+    traj.v          = v_full';
+    traj.a          = a_full';
+    traj.des_states = [v_body_des, yawdot_des]';
+    traj.yaw_des    = yaw_des';
 
     traj.query = @(t_query) query_trajectory(t_query, t, ...
                 F_x1, F_x2, F_v1, F_v2, F_a1, F_a2, F_b1, F_b2, F_yaw, F_yawdot);
 end
 
 %%
-function [x, v, a, v_body, yaw, yawdot] = query_trajectory(t_query, t, F_x1, F_x2, F_v1, F_v2, F_a1, F_a2)
+function [x, v, a, des_states, yaw_des] = query_trajectory(t_query, t, F_x1, F_x2, F_v1, F_v2, F_a1, F_a2, F_b1, F_b2, F_yaw, F_yawdot)
     
-    t_query = min(max(t_query(:)', t(1)), t(end));  % clamp
+    t_query    = min(max(t_query(:)', t(1)), t(end));  % clamp
 
-    x = [F_x1(t_query)', F_x2(t_query)'];
-    v = [F_v1(t_query)', F_v2(t_query)'];
-    a = [F_a1(t_query)', F_a2(t_query)'];
-    v_body = [F_b1(t_query)', F_b2(t_query)', F_b3(t_query)'];
-    yaw = F_yaw(t_query)';
-    yawdot = F_yawdot(t_query)';
+    x          = [F_x1(t_query)', F_x2(t_query)'];
+    v          = [F_v1(t_query)', F_v2(t_query)'];
+    a          = [F_a1(t_query)', F_a2(t_query)'];
+    des_states = [F_b1(t_query)', F_b2(t_query)', F_yawdot(t_query)'];
+    yaw_des    = F_yaw(t_query)';
 end

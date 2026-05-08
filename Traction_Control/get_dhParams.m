@@ -1,10 +1,11 @@
-function [traj, dhParams] = get_rover_parameters(traj, terrain, params)
+function [traj, dhParams] = get_dhParams(traj, terrain, params)
     t = traj.t;
     
     z        = zeros(size(t));
     roll     = zeros(size(t));
     pitch    = zeros(size(t));
     zdot     = zeros(size(t));
+    zddot    = zeros(size(t));
     rolldot  = zeros(size(t));
     pitchdot = zeros(size(t));
     contact_points = zeros(3,6,length(t));
@@ -26,11 +27,11 @@ function [traj, dhParams] = get_rover_parameters(traj, terrain, params)
     alpha     = params.ema_alpha; 
     alpha_der = params.ema_alpha_der; 
     
-    [z_terr, dzdx, dzdy] = terrain.query(traj.x(1,1), traj.x(1,2));
+    [z_terr, dzdx, dzdy] = terrain.query(traj.x(1,1), traj.x(2,1));
     
     psi_k = zeros(6,1); delta_k = zeros(6,1);
     beta_k = 0; rho1_k = 0; rho2_k = 0;
-    z_k = 0; roll_k = 0; pitch_k = 0;
+    z_k = 0; zdot_k = 0; roll_k = 0; pitch_k = 0;
     prev_sol = [z_terr + params.rover_gnd_clr; ...
                 atan(dzdx); atan(dzdy); ...
                 atan(dzdy) / 2; atan(dzdy) / 4; atan(dzdy) / 4; ...
@@ -38,7 +39,7 @@ function [traj, dhParams] = get_rover_parameters(traj, terrain, params)
     
     for i = 1:length(t)
         disp(i)
-        [sol, contact_point] = solve_rover_pose([traj.x(i,:)'; traj.yaw_des(i); psi_k], prev_sol, terrain, params);
+        [sol, contact_point] = solve_rover_pose([traj.x(:,i); traj.yaw_des(i); psi_k], prev_sol, terrain, params);
     
         contact_points(:,:,i) = contact_point;
         
@@ -74,6 +75,9 @@ function [traj, dhParams] = get_rover_parameters(traj, terrain, params)
         
             dhParams(i).deltadot = alpha_der*raw_deltadot + ...
                                    (1-alpha_der)*dhParams(i-1).deltadot;
+
+            raw_zddot = (zdot(i) - zdot_k)/dt;
+            zddot(i)  = alpha_der*raw_zddot  + (1-alpha_der)*zddot(i-1);
         else
             z(i)     = sol(1);
             roll(i)  = sol(2);
@@ -94,15 +98,15 @@ function [traj, dhParams] = get_rover_parameters(traj, terrain, params)
     
         if i > 1
             dhParams(i).psi      = dhParams(i-1).psi;
-            dhParams(i).thetadot = dhParams(i-1).thetadot_cmd;
+            dhParams(i).thetadot_cmd = dhParams(i-1).thetadot_cmd;
             dhParams(i).psidot   = dhParams(i-1).psidot;
         else
             dhParams(i).psi      = zeros(6,1);
-            dhParams(i).thetadot = zeros(6,1);
+            dhParams(i).thetadot_cmd = zeros(6,1);
             dhParams(i).psidot   = zeros(6,1);
         end
-    
-        [psi,thetadot] = inverse_kinematics(traj.des_states(i,:), [rolldot(i), pitchdot(i)], params, dhParams(i));
+
+        [psi,thetadot] = inverse_kinematics(traj.des_states(:,i), [rolldot(i), pitchdot(i)], params, dhParams(i));
         dhParams(i).thetadot_cmd = thetadot;
     
         if i > 1
@@ -117,17 +121,13 @@ function [traj, dhParams] = get_rover_parameters(traj, terrain, params)
     
         psi_k = dhParams(i).psi; delta_k = dhParams(i).delta;
         beta_k = dhParams(i).beta; rho1_k = dhParams(i).rho1; rho2_k = dhParams(i).rho2;
-        roll_k = roll(i); pitch_k = pitch(i);
+        z_k = z(i); zdot_k = zdot(i); roll_k = roll(i); pitch_k = pitch(i);
         prev_sol = sol;
     end
 
-    zddot = (zdot(2:end).^2 - zdot(1:end-1).^2) ./ (2 * diff(t));
-    zddot = medfilt1(zddot, 11);
-    zddot = [zddot; zddot(end)];
-
-    traj.x         = [traj.x, z];
-    traj.v         = [traj.v, zdot];
-    traj.a         = [traj.a, zddot];
-    traj.euler     = [roll, pitch, traj.yaw_des];
-    traj.eulerdots = [rolldot, pitchdot, traj.des_states(:,3)];
+    traj.x         = [traj.x; z];
+    traj.v         = [traj.v; zdot];
+    traj.a         = [traj.a; zddot];
+    traj.euler     = [roll; pitch; traj.yaw_des];
+    traj.eulerdots = [rolldot; pitchdot; traj.des_states(3,:)];
 end

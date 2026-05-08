@@ -1,8 +1,8 @@
 function plot_traj(traj)
-    t = traj.t;
-    x = traj.x;
-    v = traj.v;
-    a = traj.a;
+    t = traj.t';
+    x = traj.x';
+    v = traj.v';
+    a = traj.a';
     
     figure;
     plot(x(:,1), x(:,2), 'b', 'LineWidth', 2);
