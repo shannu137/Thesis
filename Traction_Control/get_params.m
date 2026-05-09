@@ -82,4 +82,29 @@ function params = get_params()
     
     params.noise_enc  = 0.01;
     params.noise_curr = 0.01;
+
+    % params.cam_k1 = ;
+    % params.cam_k2 = ;
+    % params.cam_p1 = ;
+    % params.cam_p2 = ;
+    % params.cam_k3 = ;
+    % params.cam_fx = ;
+    % params.cam_fy = ;
+    % params.cam_cx = ;
+    % params.cam_cy = ;
+    % 
+    % params.cam_width = ;
+    % params.cam_height = ;
+    % params.cam_fov_h = ;
+    % params.cam_fov_v = ;
+    params.vo_range = 4; % [m]
+
+    % params.cam_t_offset = ;
+    % params.cam_R_offset = ;
+    % params.cam_baseline = ;
+
+    params.vo_N_feat = 150;
+    params.vo_sigma_px = 0.5; % [px] 
+    params.cam_z_near = 0.05; % [m]
+
 end

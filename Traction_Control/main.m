@@ -9,6 +9,7 @@ start = [60,90];
 goal  = [90,60];
 
 traj = generate_trajectory(start,goal,terrain,params);
+%%
 plot_traj(traj)
 
 %%
@@ -33,3 +34,4 @@ thetadot_mod = Omega_t.*(1-s);
 x0 = [traj_interp.x(:,1); traj_interp.euler(:,1)];
 actual_traj = forward_kinematics(x0, traj_interp, thetadot_mod, params, dhParams, ones(6,1));
 
+%%
