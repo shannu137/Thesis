@@ -1,10 +1,11 @@
-function [Omega_t, current_t, encoder_m, current_m] = get_enc_curr_meas(traj, bekker, params, dhParams)
+function [Omega_t, current_t, encoder_m, current_m, Vin] = get_enc_curr_meas(traj, bekker, params, dhParams)
     
     t = traj.t;
     Omega_t   = zeros(6,length(t));
     current_t = zeros(6,length(t));
     encoder_m = zeros(6,length(t));
     current_m = zeros(6,length(t));
+    Vin       = zeros(6,length(t));
 
     Omega_m_k = zeros(6,1);
     theta_m_k = zeros(6,1);
@@ -49,12 +50,12 @@ function [Omega_t, current_t, encoder_m, current_m] = get_enc_curr_meas(traj, be
             e_integral(integrate_mask) = e_integral(integrate_mask) + e(integrate_mask)*dt_motor;
             
             u = max(min(u, PWM_max), -PWM_max);
-            Vin = (u / PWM_max) * params.motor_V_supply;
+            Vin(:,i) = (u / PWM_max) * params.motor_V_supply;
     
             T_motor = Kt*i_m_k - b*Omega_m_k;
             T_load = r*Fsoil;
         
-            idot = (Vin - R*i_m_k - Ke*Omega_m_k)/L;
+            idot = (Vin(:,i) - R*i_m_k - Ke*Omega_m_k)/L;
             Omegadot = (T_motor - T_load)/J;
         
             Omega_m_k = Omega_m_k + Omegadot*dt_motor;

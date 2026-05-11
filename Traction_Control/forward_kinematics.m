@@ -78,6 +78,11 @@ function actual_traj = forward_kinematics(x0, traj, thetadot_mod, params, dhPara
         v(:,k) = R_R2N*v_b(:,k);
     end
 
+    a = zeros(3,N);
+    for i = 1:3
+        a(i,:) = gradient(v(i,:), t);
+    end
+
     for i = 1:3
         pos(i,:) = x0(i) + cumtrapz(t,v(i,:));
     end
@@ -86,6 +91,7 @@ function actual_traj = forward_kinematics(x0, traj, thetadot_mod, params, dhPara
     actual_traj.x = pos;
     actual_traj.v_b = v_b;
     actual_traj.v = v;
+    actual_traj.a = a;
     actual_traj.euler = att;
     actual_traj.eulerdots = eulerdots;
 end

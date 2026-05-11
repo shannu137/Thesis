@@ -50,21 +50,21 @@ function params = get_params()
     params.soil_phi  = deg2rad(35); % [rad]
     params.soil_K    = 1.78e-2;     % [m]
 
-    % d2r = pi / 180;
-    % g = params.gravity;
-    % 
-    % params.IMU = imuSensor('accel-gyro', ...
-    %             'Accelerometer', accelparams('MeasurementRange', 2 * g, ...       % +-2g
-    %                                          'Resolution', 1e-03 * g, ...         % 1 mg/LSB
-    %                                          'NoiseDensity', 220e-06 * g, ...     % 220 µg/sqrt(Hz)
-    %                                          'ConstantBias', 60e-03 * g, ...      % +-60 mg
-    %                                          'TemperatureBias', 0.5e-03 * g), ... % +-0.5 mg/deg-C                 
-    %             'Gyroscope', gyroparams('MeasurementRange', 250 * d2r, ...        % +-250 dps
-    %                                     'Resolution', 8.75e-03 * d2r, ...         % 8.75 mdps/digit
-    %                                     'NoiseDensity', 0.03 * d2r, ...           % 0.03 dps/sqrt(Hz)
-    %                                     'ConstantBias', 10 * d2r, ...             % +-10 dps (typical)
-    %                                     'TemperatureBias', 0.03 * d2r), ...       % +-0.03 dps/deg-C
-    %             'ReferenceFrame', 'ENU'); 
+    d2r = pi / 180;
+    g = params.gravity;
+
+    params.imu = imuSensor('accel-gyro', ...
+                'Accelerometer', accelparams('MeasurementRange', 2 * g, ...       % +-2g
+                                             'Resolution', 1e-03 * g, ...         % 1 mg/LSB
+                                             'NoiseDensity', 220e-06 * g, ...     % 220 µg/sqrt(Hz)
+                                             'ConstantBias', 60e-03 * g, ...      % +-60 mg
+                                             'TemperatureBias', 0.5e-03 * g), ... % +-0.5 mg/deg-C                 
+                'Gyroscope', gyroparams('MeasurementRange', 250 * d2r, ...        % +-250 dps
+                                        'Resolution', 8.75e-03 * d2r, ...         % 8.75 mdps/digit
+                                        'NoiseDensity', 0.03 * d2r, ...           % 0.03 dps/sqrt(Hz)
+                                        'ConstantBias', 10 * d2r, ...             % +-10 dps (typical)
+                                        'TemperatureBias', 0.03 * d2r), ...       % +-0.03 dps/deg-C
+                'ReferenceFrame', 'ENU', 'SampleRate', params.fs); 
 
     params.motorctrl_Kff  = 75;
     params.motorctrl_Kp   = 35;
@@ -83,28 +83,36 @@ function params = get_params()
     params.noise_enc  = 0.01;
     params.noise_curr = 0.01;
 
-    % params.cam_k1 = ;
-    % params.cam_k2 = ;
-    % params.cam_p1 = ;
-    % params.cam_p2 = ;
-    % params.cam_k3 = ;
-    % params.cam_fx = ;
-    % params.cam_fy = ;
-    % params.cam_cx = ;
-    % params.cam_cy = ;
-    % 
-    % params.cam_width = ;
-    % params.cam_height = ;
-    % params.cam_fov_h = ;
-    % params.cam_fov_v = ;
+    params.cam_k1 = 0;
+    params.cam_k2 = 0;
+    params.cam_p1 = 0;
+    params.cam_p2 = 0;
+    params.cam_k3 = 0;
+    params.cam_fx = 600;
+    params.cam_fy = 600;
+    params.cam_cx = 320; % W/2
+    params.cam_cy = 240; % H/2
+
+    params.cam_width = 640;
+    params.cam_height = 480;
+    params.cam_fov_h = 2*atan(params.cam_width  / (2*params.cam_fx));
+    params.cam_fov_v = 2 * atan(params.cam_height / (2*params.cam_fy));
     params.vo_range = 4; % [m]
 
-    % params.cam_t_offset = ;
-    % params.cam_R_offset = ;
-    % params.cam_baseline = ;
+    params.cam_t_offset = [0.25; 0.15; 0.05]; % left cam in body frame
+    params.cam_R_offset = singleAxisDCM(2,-pi/2)*singleAxisDCM(3,pi/2)*singleAxisDCM(1,12*pi/180); % cam 2 body
+    params.cam_baseline = 0.3;
 
     params.vo_N_feat = 150;
     params.vo_sigma_px = 0.5; % [px] 
     params.cam_z_near = 0.05; % [m]
 
+    params.P0 = 1e-4*eye(27);
+
+    gyro_nd  = (0.03 * d2r)^2; 
+    accel_nd = (220e-6 * g)^2;
+    gyro_bias_nd  = (1e-4)^2;
+    accel_bias_nd = (1e-4)^2;
+    Q = blkdiag(gyro_nd*eye(3), accel_nd*eye(3), gyro_bias_nd*eye(3), accel_bias_nd*eye(3), 1e-2*eye(6), 1e-2*eye(6));
+    params.Q = Q;
 end

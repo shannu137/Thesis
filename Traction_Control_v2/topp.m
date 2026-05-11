@@ -1,0 +1,328 @@
+function [t_out, s_out, v_out, switches, MVC] = topp(dr,ddr,s_grid,params)
+    N = length(s_grid);
+    v_max = params.rover_vel_limit;
+    a_max = params.rover_acc_limit;
+    ds = mean(diff(s_grid));
+    
+    MAX_BINARY = 80;
+    MAX_OUTER = 4*N;
+
+    A = zeros(N,1);
+    B = zeros(N,1);
+    C = zeros(N,1);
+    
+    for k = 1:N
+        T = dr(k,:);
+        R = ddr(k,:);
+        A(k) = dot(T,T);
+        B(k) = dot(T,R);
+        C(k) = dot(R,R);
+    end
+
+    % vel limit from vel constraint
+    v_vel = v_max ./ sqrt(max(A, 1e-12));
+
+    % vel limit from acc constraint
+    disc_zero = A.*C - B.^2;
+    v_acc = inf(N,1);
+    ok = disc_zero > 1e-12;
+    v_acc(ok) = (A(ok).*a_max^2 ./ disc_zero(ok)).^0.25;
+
+    % Maximum velocity curve
+    MVC = min(v_vel, v_acc);
+
+    % Adaptive tolerances
+    mvc_med    = max(median(MVC(isfinite(MVC))), 1e-12);
+    TOL_touch  = mvc_med * 1e-4;   % MVC-touch window in Step 4
+    TOL_cross  = mvc_med * 5e-2;   % arc-crossing window  in Step 5
+    TOL_binary = mvc_med * 1e-5;   % binary search stop criterion
+
+    % Backward integration
+    F = zeros(N,1);
+    F(N) = 0;
+    for k = N-1:-1:1
+        v_curr = max(F(k+1),1e-12);
+        [L, ~] = acc_bounds(k+1, v_curr,A,B,C,a_max);
+        v2 = v_curr^2 - 2*L*ds; % backward step
+        if v2 < 0
+            v2 = 0;
+        end
+        v_new = sqrt(v2);
+        F(k) = v_new;
+
+        % if F hits MVC
+        if v_new >= MVC(k) + TOL_touch
+            F(1:k) = MVC(1:k);
+            break
+        end
+    end
+    F = min(F, MVC);
+    F = max(F, 0);
+
+    % Main Loop
+    switches     = [];
+    k_curr       = 1;
+    v_curr       = 0;
+    v_profile    = nan(N,1);
+    v_profile(1) = 0;
+    outer_iter   = 0;
+
+    while k_curr < N
+        outer_iter = outer_iter + 1;
+        if outer_iter > MAX_OUTER
+            warning('TOPP:maxIter','Exceeded max outer iterations.');
+            break
+        end
+
+        k_start = k_curr; % s at arc start
+        v_start = v_curr; % v at arc start
+
+        % Integrate forward
+        v       = v_start;
+        hit_F   = false;
+        hit_MVC = false;
+        k_lim   = k_start; % save point if it hits MVC
+        v_lim   = v_start;
+
+        for k = k_start : N-1
+            [~,U] = acc_bounds(k,v,A,B,C,a_max);
+            v2 = v^2 + 2*U*ds;
+            if v2 < 0
+                v2 = 0;
+            end
+            v_next = sqrt(v2);
+
+            % Case 2: If forward curve hits MVC
+            if v_next > MVC(k+1) + TOL_touch
+                hit_MVC = true;
+                k_lim = k+1;
+                v_lim = MVC(k+1);
+                v_profile = fill_arc(v_profile, k_start, k, v_start, true,A,B,C,a_max,MVC,ds);
+                break
+            end
+
+            v = v_next;
+
+            % Case 1: Forward curve hits backward curve
+            if v >= F(k+1) + TOL_cross
+                switches(end+1) = s_grid(k+1);
+                v_profile = fill_arc(v_profile, k_start, k+1, v_start, true,A,B,C,a_max,MVC,ds);
+                v_profile(k+1) = v;
+
+                for j = k+2:N
+                    v_profile(j) = F(j);
+                end
+                hit_F = true;
+                break
+            end
+        end
+
+        if hit_F
+            break
+        end
+
+        if ~hit_MVC
+            v_profile = fill_arc(v_profile, k_start, N, v_start, true,A,B,C,a_max,MVC,ds);
+            break
+        end
+        
+        % binary search for tangency
+        v_high = v_lim; % higher limit for binary search
+        v_low  = 0;     % lower  limit for binary search
+        k_tan  = k_lim; % best tangency point found so far
+        v_tan  = 0;
+
+        for iter = 1:MAX_BINARY
+            v_test = (v_high + v_low) / 2;
+
+            [k_touch, v_touch, outcome] = integrate_fwd(k_lim, v_test, MVC,A,B,C,a_max, ds, N, TOL_touch);
+
+            if outcome == 1 
+                % penetrated MVC --> v too high
+                v_high = v_test;
+            elseif outcome == -1
+                % hit zero / no contact --> v too low
+                v_low = v_test;
+            else
+                k_tan = k_touch;
+                v_tan = v_touch;
+                % v_low = v_test;  % to refine upward
+                break;
+            end
+
+            if (v_high - v_low) < TOL_binary
+                break;
+            end
+        end
+
+        % If binary search didnot find a touch, (k_tan,v_tan) = (k_lim,0).
+        % This means MVC is hard wall. So, take a step along MVC and check
+        % again.
+        if v_tan < TOL_touch && k_tan == k_lim
+            v_profile(k_lim) = MVC(k_lim);
+            
+            if k_lim < N
+                k_tan = k_lim + 1;
+                v_tan = MVC(k_tan);
+                v_profile(k_tan) = v_tan;
+            else
+                break;
+            end  
+        end
+
+        % integrate backward from (k_tan,v_tan)
+        [k_sw, v_sw] = integrate_bwd_to_arc(k_tan,v_tan,v_profile,k_start,A,B,C,a_max,ds,TOL_cross);
+
+        switches(end+1) = s_grid(k_sw);
+
+        v_profile = fill_arc(v_profile, k_start, k_sw-1, v_start, true,A,B,C,a_max, MVC,ds);
+        v_profile(k_sw) = v_sw;
+
+        v_profile = fill_arc(v_profile, k_sw, k_tan, v_sw, false,A,B,C,a_max, MVC,ds);
+        v_profile(k_tan) = v_tan;
+
+        % L->U switch at tangency
+        switches(end+1) = s_grid(k_tan);
+
+        k_prev = k_curr;
+        k_curr = k_tan;
+        v_curr = v_tan;
+        v_profile(k_curr) = v_curr;
+
+        % If we made no progress, advance by one step
+        if k_curr <= k_prev
+            k_curr = k_prev + 1;
+            if k_curr > N
+                break;
+            end
+            v_curr = min(v_curr, MVC(k_curr));
+            v_profile(k_curr) = v_curr;
+        end
+    end
+
+    v_profile(N) = 0;
+    v_profile    = max(min(v_profile, min(MVC,F)), 0);
+    v_profile(isnan(v_profile)) = 0;
+
+    % recover time
+    t_out = zeros(N,1);
+    for k = 1:N-1
+        v_avg = 0.5*(v_profile(k) + v_profile(k+1));
+        v_avg = max(v_avg, 1e-9);
+        t_out(k+1) = t_out(k) + ds / v_avg;
+    end
+
+    s_out = s_grid(:);
+    v_out = v_profile(:);
+end
+
+function [L, U] = acc_bounds(k,v,A,B,C,a_max)
+% acceleration bounds
+    Ak = A(k); Bk = B(k); Ck = C(k);
+    disc = Ak*a_max^2 + v^4*(Bk^2 - Ak*Ck);
+    if disc < 0
+        disc = 0;
+    end
+    sq_disc = sqrt(disc);
+
+    Ak = max(Ak, 1e-12);
+    L = (-Bk*v^2 - sq_disc) / Ak; % max deceleration
+    U = (-Bk*v^2 + sq_disc) / Ak; % max acceleration
+end
+
+function vel_prof = fill_arc(vel_prof, k_start, k_end, v0, use_U,A,B,C,a_max,MVC,ds)
+% fills velocity profiles from k_start to k_end by integrating U if
+% use_U = true or with L
+    v = v0;
+    vel_prof(k_start) = v;
+
+    for j = k_start: k_end-1
+        [L, U] = acc_bounds(j,v,A,B,C,a_max);
+        a = U*use_U + L*(~use_U);
+
+        v2 = v^2 + 2*a*ds;
+        if v2 < 0
+            v2 = 0;
+        end
+        v = sqrt(v2);
+        vel_prof(j+1) = v;
+    end
+end
+
+function [k_touch, v_touch, outcome] = integrate_fwd(k0, v0, MVC,A,B,C,a_max, ds, N, TOL_touch)
+% Gives best tangent point k_touch and v_touch
+% outcome =  1: penetrated MVC (v_test too high)
+%         = -1: hit zero without touching MVC
+%         =  0: touched MVC with TOL_touch
+    outcome  = -1;
+    k_touch  = k0;
+    v_touch  = v0;
+    best_gap = inf;
+
+    v = v0;
+    for k = k0:N-1
+        [L,~] = acc_bounds(k,v,A,B,C,a_max);
+        v2 = v^2 + 2*L*ds;
+
+        if v2 <= 0
+            return; % hit zero, outcome = -1
+        end
+        v_next = sqrt(v2);
+
+        if v_next > MVC(k+1) + TOL_touch
+            outcome = 1;
+            return;
+        end
+
+        % track best approach to MVC from below
+        gap = MVC(k+1) - v_next;
+        % if gap >= 0 && gap < best_gap
+        %     best_gap = gap;
+        %     k_touch = k+1;
+        %     v_touch = v_next;
+        % end
+
+        % Within touch tolerance
+        if gap >= 0 && gap < TOL_touch
+            k_touch = k+1;
+            v_touch = v_next;
+            outcome = 0;
+            return;
+        end
+
+        v = v_next;
+    end
+
+    % reached end: if we get close aat some point, accept it
+    % if best_gap < 3*TOL_touch
+    %     disp(k_touch)
+    %     outcome = 0;
+    % end
+    % else outcome stays at -1
+end
+
+function [k_sw, v_sw] = integrate_bwd_to_arc(k_tan,v_tan,v_profile,k_arc_start,A,B,C,a_max,ds,TOL_cross)
+    v = v_tan;
+    k_sw = k_arc_start;
+    v_sw = max(v_profile(k_arc_start), 0);
+
+    for k = k_tan : -1 : k_arc_start+1
+        [L,~] = acc_bounds(k,v,A,B,C,a_max);
+        v2 = v^2 - 2*L*ds;
+        if v2 < 0
+            v2 = 0;
+        end
+        v_back = sqrt(v2);
+
+        % check crossing with forward arc
+        vp_prev = v_profile(k-1);
+        if ~isnan(vp_prev)
+            if v_back <= vp_prev + TOL_cross
+                k_sw = k-1;
+                v_sw = min(v_back,vp_prev);
+                return;
+            end
+        end
+        v = v_back;
+    end
+end
