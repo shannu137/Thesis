@@ -1,6 +1,6 @@
-function traj = run_stereo_vo_trajectory(vo_data, x0_IC, params)
+function traj = run_stereo_vo_trajectory(vo_frames, x0_IC, params)
 
-    Nframes = length(vo_data.frames);
+    Nframes = length(vo_frames);
 
     baseline = params.cam_baseline;
     fx = params.cam_fx;
@@ -41,8 +41,8 @@ function traj = run_stereo_vo_trajectory(vo_data, x0_IC, params)
     
     for k = 2:Nframes
 
-        fr_prev = vo_data.frames(k-1);
-        fr_curr = vo_data.frames(k);
+        fr_prev = vo_frames(k-1);
+        fr_curr = vo_frames(k);
 
         [common_ids, idx_prev, idx_curr] = intersect(fr_prev.track_id, fr_curr.track_id);
 

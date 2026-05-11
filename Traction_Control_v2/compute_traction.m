@@ -1,60 +1,7 @@
-function bekker = get_traction_force(traj, s, terrain, params, dhParams)
-    bekker(length(traj.t)) = struct( ...
-        'Fsoil',    [], ...
-        'Fn_check', [], ...
-        'T_wheel',  [], ...
-        'theta1',   [], ...
-        'theta2',   [], ...
-        'z0',       [], ...
-        'W_wheel',  [] );
-
-    for i = 1:length(traj.t)
-        rover_pos  = traj.x(:,i);
-        rover_att  = traj.euler(:,i);
-        s_t        = s(:,i);
-        dhParams_t = dhParams(i);
-
-        W_total  = params.rover_mass * params.gravity;
-        W_wheel  = W_total / 6;          % [N] per wheel 
-    
-        Fsoil_all    = zeros(6,1);
-        Fn_check_all = zeros(6,1);
-        T_wheel_all  = zeros(6,1);
-        theta1_all   = zeros(6,1);
-        theta2_all   = zeros(6,1);
-        z0_all       = zeros(6,1);
-        W_all        = W_wheel * ones(6,1);
-    
-        R_N2R = singleAxisDCM(1, rover_att(1)) * singleAxisDCM(2, rover_att(2)) * singleAxisDCM(3, rover_att(3));
-        R_R2N = R_N2R';
-    
-        for w = 1:6
-            [Fsoil_all(w), Fn_check_all(w), T_wheel_all(w), theta1_all(w), theta2_all(w), z0_all(w)] = ...
-                bisect_bekker(w, W_wheel, s_t(w), rover_pos, R_R2N, terrain, params, dhParams_t);
-            if(Fsoil_all(w) < 0)
-                Fsoil_all(w) = 0;
-            end
-        end
-    
-        bekker(i).Fsoil    = Fsoil_all;
-        bekker(i).Fn_check = Fn_check_all;
-        bekker(i).T_wheel  = T_wheel_all;
-        bekker(i).theta1   = theta1_all;
-        bekker(i).theta2   = theta2_all;
-        bekker(i).z0       = z0_all;
-        bekker(i).W_wheel  = W_all;
-    end
-end
-
-function [Fsoil, Fn_check, T_wheel, theta1, theta2, z0] = bisect_bekker(wheel_number, W_wheel, s, rover_pos, R_R2N, terrain, params, dhParams)
+function Fsoil = compute_traction(wheel_number, W_wheel, s, rover_pos, R_R2N, terrain, params, dhParams)
 
     if W_wheel <= 0
         Fsoil    = 0;
-        Fn_check = 0;
-        T_wheel  = 0;
-        theta1   = 0;
-        theta2   = 0;
-        z0       = 0;
         return;
     end
 
@@ -69,12 +16,6 @@ function [Fsoil, Fn_check, T_wheel, theta1, theta2, z0] = bisect_bekker(wheel_nu
 
     if res_lo * res_hi > 0
         warning('compute_bekker: Fn(z0) does not bracket W=%.3f N. Check soil params or wheel load.', W_wheel);
-        Fsoil    = 0;
-        Fn_check = 0;
-        T_wheel  = 0;
-        theta1   = 0;
-        theta2   = 0;
-        z0       = 0;
         return;
     end
 
@@ -85,21 +26,17 @@ function [Fsoil, Fn_check, T_wheel, theta1, theta2, z0] = bisect_bekker(wheel_nu
     tau_k     = zeros(20,1);
     theta_pts = zeros(20,1);
     w_pts     = zeros(20,1);
-    th1_last  = 0;
-    th2_last  = 0;
 
     for iter = 1:N_bisect
 
         z0_mid = (z0_lo + z0_hi) / 2;
 
-        [res_mid, sk, tk, tp, wp, th1_mid, th2_mid] = bekker_residual(wheel_number, z0_mid, W_wheel, s, rover_pos, R_R2N, terrain, params, dhParams);
+        [res_mid, sk, tk, tp, wp, ~, ~] = bekker_residual(wheel_number, z0_mid, W_wheel, s, rover_pos, R_R2N, terrain, params, dhParams);
 
         sigma_k   = sk;
         tau_k     = tk;
         theta_pts = tp;
         w_pts     = wp;
-        th1_last  = th1_mid;
-        th2_last  = th2_mid;
 
         if abs(res_mid) < tol_Fn
             break;
@@ -112,17 +49,7 @@ function [Fsoil, Fn_check, T_wheel, theta1, theta2, z0] = bisect_bekker(wheel_nu
             res_lo = res_mid;
         end
     end
-
-    z0     = (z0_lo + z0_hi) / 2;
-    theta1 = th1_last;
-    theta2 = th2_last;
-
     Fsoil = r*b*sum(w_pts.*(tau_k.*cos(theta_pts) - sigma_k.*sin(theta_pts)));
-
-    Fn_check = r*b*sum(w_pts.*(sigma_k.*cos(theta_pts)+ tau_k.*sin(theta_pts)));
-
-    T_wheel = r^2*b*sum(w_pts.*tau_k);
-
 end
 
 function [res, sigma_k, tau_k, theta_pts, w_pts, th1, th2] = bekker_residual(wheel_number, z0, W_wheel, s, rover_pos, R_R2N, terrain, params, dhParams)
@@ -257,24 +184,4 @@ function [xi, w] = gauss_legendre_20()
         0.083276741576704748; 0.062672048334109064; ...
         0.040601429800386941; 0.017614007139152118];
 
-end
-
-function C = singleAxisDCM(axis, angle)
-%SINGLEAXISDCM  Gives DCM corresponding to rotation about given coordinate axis by given angle
-
-    if axis == 1
-        C = [1 0 0;
-             0 cos(angle) sin(angle);
-             0 -sin(angle) cos(angle)];
-    elseif axis == 2
-            C = [cos(angle) 0 -sin(angle);
-                 0 1 0;
-                 sin(angle) 0 cos(angle)];
-    elseif axis == 3
-            C = [cos(angle) sin(angle) 0;
-                 -sin(angle) cos(angle) 0;
-                 0 0 1];
-    else 
-        error('Invalid axis specified. Specify 1 for X-axis, 2 for Y-axis, and 3 for Z-axis')
-    end
 end
