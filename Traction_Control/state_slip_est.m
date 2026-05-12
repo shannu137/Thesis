@@ -270,7 +270,7 @@ for k = 1:N
     F_soil = zeros(6,1);
 
     W_wheel = params.rover_mass * params.gravity / 6;
-    R_N2R = singleAxisDCM(1, att(1)) * singleAxisDCM(2, att(2)) * singleAxisDCM(3, att(3));
+    R_N2R = singleAxisDCM(1, att(1,k)) * singleAxisDCM(2, att(2,k)) * singleAxisDCM(3, att(3,k));
     R_R2N = R_N2R';
 
     for w = 1:6
@@ -346,7 +346,7 @@ for k = 1:N
          0,  cos(dh_roll(k)), sin(dh_roll(k))*cos(dh_pitch(k));
          0, -sin(dh_roll(k)), cos(dh_roll(k))*cos(dh_pitch(k))];
     omega_body = T*eulerdots(:,k);
-    omega      = R_N2R * omega_body;
+    omega      = R_R2N * omega_body;
 
     a = acc(:,k) - [0; 0; 9.81-params.gravity];
     [accelMeas(:,k), gyroMeas(:,k)] = params.imu(a', omega', R_N2R);
@@ -487,14 +487,16 @@ for k = 1:N
         [ekf_x(:,k), ekf_P{k}] = ekf_vo_update(x_pred, P_pred, z_ekf, R_ekf);
 
         % -----------------------------------------------------------------------------------
-        Om_est = sign(ekf_x(16:21,k)).*max(abs(ekf_x(16:21,k)),1e-3);
+        Om_est = ekf_x(16:21,k);
         vt_raw = compute_tangential_velocity(ekf_x(:,k), gyroMeas(:,k), dhParams(k), params);
         if k > 2
             vt_filt(:,k) = alpha_lp*vt_raw + (1-alpha_lp)*vt_filt(:,k-1);
         else
             vt_filt(:,k) = vt_raw;
         end
-        s_est(:,k) = max(-1, min(1, 1 - vt_filt(:,k)./(r*Om_est)));
+        eps_slip = 1e-3;
+        s_est(:,k) = (r*Om_est - vt_filt(:,k)) ./ max([abs(r*Om_est), abs(vt_filt(:,k)), eps_slip*ones(6,1)], [], 2);
+        s_est(:,k) = min(1, max(-1, s_est(:,k)));
     end
 
     % -----------------------------------------------------------------------------------

@@ -266,7 +266,7 @@ for k = 1:N
     prev_sol = sol;
 
     % -----------------------------------------------------------------------------------
-    s_k = s(:,k);
+    % Compute vt using v(:,1) and Omega_m_k, compute slip
     F_soil = zeros(6,1);
 
     W_wheel = params.rover_mass * params.gravity / 6;
@@ -313,6 +313,14 @@ for k = 1:N
     Vin(:,k)       = Vin_k;
 
     % -----------------------------------------------------------------------------------
+    % This part is replaced using dynamics
+    % Fi = R_R2W * R_C2R * [Fsoil; 0; 0];
+    % vdot = a = Sum(Fi)
+    % v_b = R_W2R * v
+    % xdot = v
+    % I*omegadot = cross(omega,I*omega) + Sum(cross(ri,Fi))
+    % Get omega and get eulerdots as B*omega
+    
     thetadot_mod_k = Omega_m_k .* (1-s_k);
 
     actuation = [dhParams(k).psidot'; thetadot_mod_k'];
@@ -503,9 +511,9 @@ for k = 1:N
 end
 toc
 
-
-
-
+% -----------------------------------------------------------------------------------------------
+% Local Functions
+% -----------------------------------------------------------------------------------------------
 function [R_WC, t_WC] = body_to_world_cam(R_WB, t_WB, R_BC, t_C_body)
     R_WC = R_WB * R_BC;
     t_WC = R_WB * t_C_body + t_WB;
